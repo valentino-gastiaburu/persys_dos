@@ -89,6 +89,11 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - `viaje_motivo_recojo`: devolucion, cambio
 - `tipo_talla`: A, B, C, AC, BC, sin_talla (A=XS..XXL, B=26..36, C=2..16)
 
+## GitHub
+
+- Repo: `https://github.com/valentino-gastiaburu/persys_dos` (remoto `origin`, rama `main`,
+  primer commit `bdd4bd2` pusheado el 12/ago/2026).
+
 ## Pendientes / notas
 
 - El smoke test dejó **datos de prueba** en la BD (productos/clientes/pedidos con "SMOKE").
