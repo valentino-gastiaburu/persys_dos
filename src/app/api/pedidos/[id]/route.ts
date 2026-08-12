@@ -1,0 +1,111 @@
+import { NextRequest } from "next/server";
+import { requireRoles } from "@/lib/auth";
+import { getSupabase } from "@/lib/supabase";
+import { getDetallesActivos } from "@/lib/pedidos";
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { user, error } = await requireRoles(["vendedora", "agendadora", "almacen", "controller", "admin"]);
+  if (error) return error;
+  void user;
+
+  const { id } = await params;
+  const supabase = getSupabase();
+
+  const { data: pedido, error: err } = await supabase
+    .from("pedidos")
+    .select(`
+      *, clientes(*),
+      creado_por_usuario:usuarios!pedidos_creado_por_fkey(id, nombre),
+      vendedora:usuarios!pedidos_vendedora_1_id_fkey(id, nombre),
+      contribuyente:usuarios!pedidos_vendedora_contribuyente_id_fkey(id, nombre)
+    `)
+    .eq("id", id)
+    .single();
+
+  if (err || !pedido) {
+    return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
+  }
+
+  const detalles = await getDetallesActivos(id);
+
+  const { data: pagos } = await supabase
+    .from("pagos")
+    .select("*")
+    .eq("pedido_id", id)
+    .order("fecha");
+
+  const totalPagado = (pagos ?? []).reduce((acc, p) => acc + Number(p.monto), 0);
+  const { data: viajes } = await supabase
+    .from("viajes")
+    .select("*")
+    .eq("pedido_id", id)
+    .order("creado_el");
+
+  return Response.json({
+    pedido,
+    detalles,
+    pagos: pagos ?? [],
+    viajes: viajes ?? [],
+    total_pagado: totalPagado,
+    deuda: Number(pedido.monto_total) - totalPagado,
+  });
+}
+
+// PATCH /api/pedidos/[id] — actualizar datos del pedido (borrador o edición)
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { user, error } = await requireRoles(["vendedora", "agendadora", "controller", "admin"]);
+  if (error) return error;
+  void user;
+
+  const { id } = await params;
+  const body = await request.json();
+  const supabase = getSupabase();
+
+  const { data: actual } = await supabase
+    .from("pedidos")
+    .select("*")
+    .eq("id", id)
+    .single();
+  if (!actual) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
+
+  const permitidos = [
+    "cliente_id", "fecha_entrega", "tipo_pedido", "metodo_entrega", "empresa_envio",
+    "direccion_entrega", "ciudad", "ubicacion_maps", "canal_venta", "costo_envio",
+    "metodo_pago", "partes_a_pagar", "monto_primer_pago", "fecha_siguiente_pago",
+    "observaciones", "regalo", "vendedora_1_id", "vendedora_contribuyente_id",
+  ];
+  const updates: Record<string, any> = {};
+  for (const c of permitidos) {
+    if (body[c] !== undefined) {
+      updates[c] = body[c] === "" ? null : body[c];
+    }
+  }
+
+  if (body.costo_envio !== undefined) {
+    updates.costo_envio = Number(body.costo_envio);
+  }
+  if (body.regalo !== undefined) updates.regalo = Boolean(body.regalo);
+  if (body.monto_total !== undefined) updates.monto_total = Number(body.monto_total);
+
+  if (Object.keys(updates).length === 0) {
+    return Response.json({ error: "Sin cambios" }, { status: 400 });
+  }
+
+  const { data: pedido, error: err } = await supabase
+    .from("pedidos")
+    .update(updates)
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (err || !pedido) {
+    return Response.json({ error: "No se pudo actualizar el pedido" }, { status: 500 });
+  }
+  return Response.json({ pedido });
+}

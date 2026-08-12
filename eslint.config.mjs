@@ -5,6 +5,14 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    rules: {
+      // Patrón estándar de carga de datos en efecto (fetch en mount).
+      "react-hooks/set-state-in-effect": "off",
+      // Supabase devuelve filas sin tipar; usar `any` es pragmático aquí.
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
