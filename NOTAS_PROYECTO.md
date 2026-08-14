@@ -12,13 +12,13 @@ configuración.
 
 - App Next.js 16.3.0 (App Router, TypeScript, Tailwind v4)
 - Backend: API routes en `src/app/api/**`
-- BD: Supabase (Postgres) con enums/triggers/vistas definidos en `db/schema.sql`
+- BD: Supabase (Postgres) con enums/triggers/vistas definidos en `supabase/02_schema.sql`
 - Auth: JWT (HS256, librería `jose`), cookie `persys_session`, helpers en `src/lib/auth.ts`
 
 ## Decisiones que tomó el usuario (respuestas a mis preguntas)
 
-1. **`db/schema.sql` es el schema CORRECTO** — no usar `supabase/schema.sql` (fue un schema
-   que yo generé y quedó obsoleto/eliminado). Todo el código está alineado a los enums de `db/`.
+1. **`supabase/02_schema.sql` es el schema CORRECTO** — todo lo necesario para crear la BD vive en
+   la carpeta `supabase/` (`01_reset.sql` + `02_schema.sql`). La antigua carpeta `db/` se eliminó.
 2. **Roles**: `vendedora`, `agendadora`, `almacen`, `controller`, `admin`.
 3. El negocio maneja **ropa** (tallas seed XS–XXL / 26–36 / 2–16), no calzado 35–48.
 4. Corre los scripts SQL él mismo en el **SQL Editor** de Supabase (yo le doy el contenido).
@@ -38,7 +38,7 @@ configuración.
   **dos** FKs a `tallas` (`talla_id` y `talla_inicial`) → embed ambiguo. Se arregló usando
   hint `tallas!detalles_pedido_talla_id_fkey(nombre)` en 6 archivos.
 - **¿Por qué faltaba la columna en la lista de pedidos?** `resumen_productos` no existía en
-  `db/schema.sql` (la usaba el código). Se agregó la columna al schema y se re-corrió.
+  `supabase/02_schema.sql` (la usaba el código). Se agregó la columna al schema y se re-corrió.
 - **¿Por qué el PATCH del viaje fallaba en el smoke test?** El script enviaba POST (curl `-d`
   implica POST) a una ruta que solo implementa PATCH → 405 con cuerpo vacío. Artefacto del test.
 - **Login con curl daba 500?** Artefacto de comillas de PowerShell al pasar `-d '...'`;
@@ -46,7 +46,7 @@ configuración.
 
 ## Bugs corregidos (de esta fase)
 
-1. `pedidos.resumen_productos` faltaba en `db/schema.sql` → se agregó (columna `text`).
+1. `pedidos.resumen_productos` faltaba en `supabase/02_schema.sql` → se agregó (columna `text`).
 2. Embed ambiguo `detalles_pedido → tallas` (doble FK) → hint `!detalles_pedido_talla_id_fkey`
    en: `lib/pedidos.ts`, `api/viajes/[id]/route.ts`, `api/viajes/[id]/alistar/route.ts`,
    `api/pedidos/[id]/confirmar/route.ts`, `api/pedidos/[id]/detalles/route.ts`,
@@ -54,10 +54,10 @@ configuración.
 
 ## Scripts SQL (los corre el usuario en el SQL Editor)
 
-1. `supabase/reset.sql` → borra todo (tablas, vistas, tipos) para poder recrear.
-2. `db/schema.sql` → schema correcto + seeds (tallas, config, admin) + RLS + trigger.
+1. `supabase/01_reset.sql` → borra todo (tablas, vistas, tipos) para poder recrear.
+2. `supabase/02_schema.sql` → schema correcto + seeds (tallas, config, admin) + RLS + trigger.
 
-Orden siempre: **reset.sql primero, luego db/schema.sql**. La BD ya está recreada y verificada.
+Orden siempre: **01_reset.sql primero, luego 02_schema.sql**. La BD ya está recreada y verificada.
 
 ## Smoke test E2E (validado OK contra la BD real)
 
@@ -69,7 +69,7 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 ## Credenciales / accesos
 
 - URL app local: `http://localhost:3000`
-- Admin de prueba: DNI `00000000` / `admin123` (seed en `db/schema.sql`; en texto plano, MVP).
+- Admin de prueba: DNI `00000000` / `admin123` (seed en `supabase/02_schema.sql`; en texto plano, MVP).
 - Supabase (proyecto `ysuaeknqyujpphpkrwpb`):
   - URL: `https://ysuaeknqyujpphpkrwpb.supabase.co`
   - ANON key (publishable): `sb_publishable_mi7JNq1TrCgZdHyg2VZXlA_i2B3qPMv`
@@ -77,7 +77,7 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - Servidor de producción `next start` corriendo en `:3000` (logs en
   `C:\Users\valen\AppData\Local\Temp\opencode\persys-out.log` / `persys-err.log`).
 
-## Enums clave (db/schema.sql)
+## Enums clave (supabase/02_schema.sql)
 
 - `pedido_estado`: borrador, solicitado, confirmado, alistado, enviado, entregado, cerrado,
   cancelado, devuelto, esperando_devolucion, esperando_cambio

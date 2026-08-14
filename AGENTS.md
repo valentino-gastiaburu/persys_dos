@@ -11,5 +11,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## Persys_dos — contexto del proyecto
 
 Antes de implementar, leer `NOTAS_PROYECTO.md` (raíz del proyecto): decisiones del usuario,
-schema correcto (`db/schema.sql`), credenciales, enums, bugs corregidos y estado actual.
+schema correcto (`supabase/02_schema.sql`), credenciales, enums, bugs corregidos y estado actual.
 Actualizarlo cuando cambien decisiones o se resuelvan pendientes.

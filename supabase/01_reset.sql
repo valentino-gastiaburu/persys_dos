@@ -1,6 +1,6 @@
 -- ============================================================
 -- Persys — Reset: elimina TODO lo del esquema actual
--- Ejecuta esto ANTES de volver a correr db/schema.sql
+-- PASO 1 de 2: ejecuta este archivo primero y luego 02_schema.sql
 -- ============================================================
 
 -- Vistas
