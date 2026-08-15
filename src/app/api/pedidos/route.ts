@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     .from("pedidos")
     .insert({
       codigo,
-      estado: "borrador",
+      estado: "solicitado",
       creado_por: user.id,
       vendedora_1_id: body.vendedora_1_id || user.id,
       vendedora_contribuyente_id: body.vendedora_contribuyente_id || user.id,

@@ -115,10 +115,27 @@ export default function PedidoDetallePage() {
 
   const deuda = Number(pedido.monto_total) - totalPagado;
   const puedeConfirmar = ["borrador", "solicitado"].includes(pedido.estado);
+  const puedeCancelar = ["solicitado", "confirmado"].includes(pedido.estado);
+  const puedeVolverSolicitado = pedido.estado === "confirmado";
 
   async function confirmar() {
     setError(null);
     const { error } = await api(`/api/pedidos/${id}/confirmar`, { method: "POST" });
+    if (error) setError(error);
+    else cargar();
+  }
+
+  async function cambiarEstado(nuevoEstado: string) {
+    const aviso =
+      nuevoEstado === "cancelado"
+        ? "¿Cancelar este pedido?"
+        : "¿Volver a Solicitar? (revertir de Confirmado a Solicitado)";
+    if (!window.confirm(aviso)) return;
+    setError(null);
+    const { error } = await api(`/api/pedidos/${id}/estado`, {
+      method: "POST",
+      body: JSON.stringify({ estado: nuevoEstado }),
+    });
     if (error) setError(error);
     else cargar();
   }
@@ -147,6 +164,18 @@ export default function PedidoDetallePage() {
               Agregar producto
             </Button>
             <Button onClick={confirmar}>Confirmar pedido</Button>
+          </div>
+        )}
+        {puedeCancelar && (
+          <div className="flex gap-2">
+            {puedeVolverSolicitado && (
+              <Button variant="secondary" onClick={() => cambiarEstado("solicitado")}>
+                Volver a Solicitar
+              </Button>
+            )}
+            <Button variant="danger" onClick={() => cambiarEstado("cancelado")}>
+              Cancelar pedido
+            </Button>
           </div>
         )}
       </div>

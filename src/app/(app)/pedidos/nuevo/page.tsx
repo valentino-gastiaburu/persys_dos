@@ -69,7 +69,9 @@ export default function NuevoPedidoPage() {
   const [costoEnvio, setCostoEnvio] = useState("0");
   const [metodoPago, setMetodoPago] = useState("efectivo");
   const [partes, setPartes] = useState("1");
+  const [pagoInicial, setPagoInicial] = useState("no");
   const [montoPrimerPago, setMontoPrimerPago] = useState("");
+  const [fechaPagoParte2, setFechaPagoParte2] = useState("");
   const [observaciones, setObservaciones] = useState("");
 
   const [lineas, setLineas] = useState<Linea[]>([]);
@@ -211,7 +213,15 @@ export default function NuevoPedidoPage() {
         costo_envio: Number(costoEnvio || 0),
         metodo_pago: metodoPago,
         partes_a_pagar: Number(partes || 1),
-        monto_primer_pago: montoPrimerPago ? Number(montoPrimerPago) : null,
+        monto_primer_pago:
+          Number(partes) === 1
+            ? pagoInicial === "si"
+              ? total
+              : null
+            : montoPrimerPago
+              ? Number(montoPrimerPago)
+              : null,
+        fecha_siguiente_pago: Number(partes) > 1 ? fechaPagoParte2 || null : null,
         observaciones: observaciones || null,
         regalo: false,
       }),
@@ -437,13 +447,32 @@ export default function NuevoPedidoPage() {
               value={partes}
               onChange={(e) => setPartes(e.target.value)}
             />
-            <Input
-              label="Primer pago (S/)"
-              type="number"
-              step="0.01"
-              value={montoPrimerPago}
-              onChange={(e) => setMontoPrimerPago(e.target.value)}
-            />
+            {Number(partes) === 1 ? (
+              <Select
+                label="¿Pagó?"
+                value={pagoInicial}
+                onChange={(e) => setPagoInicial(e.target.value)}
+              >
+                <option value="no">No</option>
+                <option value="si">Sí</option>
+              </Select>
+            ) : (
+              <>
+                <Input
+                  label="Primer pago (S/)"
+                  type="number"
+                  step="0.01"
+                  value={montoPrimerPago}
+                  onChange={(e) => setMontoPrimerPago(e.target.value)}
+                />
+                <Input
+                  label="Fecha de la parte 2"
+                  type="date"
+                  value={fechaPagoParte2}
+                  onChange={(e) => setFechaPagoParte2(e.target.value)}
+                />
+              </>
+            )}
             <div className="md:col-span-3">
               <Input
                 label="Observaciones"
@@ -577,7 +606,7 @@ export default function NuevoPedidoPage() {
             </div>
             <div className="flex gap-2">
               <Button variant="secondary" disabled={loading} onClick={() => guardar(false)}>
-                Guardar borrador
+                Guardar
               </Button>
               <Button disabled={loading} onClick={() => guardar(true)}>
                 {loading ? "Procesando..." : "Confirmar pedido"}

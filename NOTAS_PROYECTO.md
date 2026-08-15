@@ -111,6 +111,16 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - `viaje_motivo_recojo`: devolucion, cambio
 - `tipo_talla`: A, B, C, AB, AC, BC, ABC, sin_talla (A=XS..XXL, B=26..36, C=2..16)
 
+## Flujo de estados del pedido
+
+- **Nace como `solicitado`** al crearse (POST /api/pedidos). Ya no nace como borrador.
+- Transiciones **manuales** (tabla de pedidos y detalle, vía `POST /api/pedidos/[id]/estado`):
+  - `solicitado` → `confirmado` (botón Confirmar, usa `/confirmar`), `cancelado`
+  - `confirmado` → `solicitado` (Volver a Solicitar), `cancelado`
+- Transición **automática**: `confirmado` → `alistado` cuando su viaje de entrega pasa a
+  `alistado` (`syncEstadoPedidoPorViajes` en `lib/pedidos.ts`). Luego `enviado`/`entregado`
+  siguiendo al viaje.
+
 ## GitHub
 
 - Repo: `https://github.com/valentino-gastiaburu/persys_dos` (remoto `origin`, rama `main`,

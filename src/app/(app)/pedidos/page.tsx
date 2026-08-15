@@ -45,6 +45,7 @@ type PedidoRow = {
   monto_total: number;
   total_pagado: number;
   deuda: number;
+  partes_a_pagar: number;
   vendedora_nombre: string | null;
 };
 
@@ -70,6 +71,28 @@ export default function PedidosPage() {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  async function confirmar(p: PedidoRow) {
+    setError(null);
+    const { error } = await api(`/api/pedidos/${p.id}/confirmar`, { method: "POST" });
+    if (error) setError(error);
+    else cargar();
+  }
+
+  async function cambiarEstado(p: PedidoRow, nuevoEstado: string) {
+    const aviso =
+      nuevoEstado === "cancelado"
+        ? "¿Cancelar este pedido?"
+        : "¿Volver a Solicitar? (revertir de Confirmado a Solicitado)";
+    if (!window.confirm(aviso)) return;
+    setError(null);
+    const { error } = await api(`/api/pedidos/${p.id}/estado`, {
+      method: "POST",
+      body: JSON.stringify({ estado: nuevoEstado }),
+    });
+    if (error) setError(error);
+    else cargar();
+  }
 
   return (
     <div>
@@ -123,13 +146,14 @@ export default function PedidosPage() {
                 <th className="px-4 py-2">Vendedora</th>
                 <th className="px-4 py-2 text-right">Total</th>
                 <th className="px-4 py-2 text-right">Deuda</th>
+                <th className="px-4 py-2 text-center">Partes</th>
                 <th className="px-4 py-2">Estado</th>
               </tr>
             </thead>
             <tbody>
               {pedidos.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-400">
+                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400">
                     No hay pedidos.
                   </td>
                 </tr>
@@ -165,17 +189,59 @@ export default function PedidosPage() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-right">
                     {Number(p.deuda) > 0 ? (
-                      <span className="font-medium text-red-600">
-                        S/ {Number(p.deuda).toFixed(2)}
-                      </span>
+                      Number(p.deuda) >= Number(p.monto_total) ? (
+                        <span className="font-medium text-red-600">Todo</span>
+                      ) : (
+                        <span className="font-medium text-red-600">
+                          S/ {Number(p.deuda).toFixed(2)}
+                        </span>
+                      )
                     ) : (
                       <span className="font-medium text-emerald-600">Pagado</span>
                     )}
                   </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-center text-slate-600">
+                    {p.partes_a_pagar ?? 1}
+                  </td>
                   <td className="whitespace-nowrap px-4 py-2">
-                    <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
-                      {ESTADO_LABEL[p.estado] ?? p.estado}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
+                        {ESTADO_LABEL[p.estado] ?? p.estado}
+                      </Badge>
+                      {p.estado === "solicitado" && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            confirmar(p);
+                          }}
+                          className="rounded-md border border-blue-600 px-2 py-0.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
+                        >
+                          Confirmar
+                        </button>
+                      )}
+                      {["solicitado", "confirmado"].includes(p.estado) && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            cambiarEstado(p, "cancelado");
+                          }}
+                          className="rounded-md border border-red-300 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                      {p.estado === "confirmado" && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            cambiarEstado(p, "solicitado");
+                          }}
+                          className="rounded-md border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                        >
+                          Volver a Solicitar
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

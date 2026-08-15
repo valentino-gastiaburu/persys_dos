@@ -8,6 +8,7 @@
     "start": "next start",
     "server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-server.ps1",
     "server:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-server.ps1 -Dev",
+    "server:dev:clean": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-server.ps1 -Dev -Clean",
     "lint": "eslint"
   },
   "dependencies": {
