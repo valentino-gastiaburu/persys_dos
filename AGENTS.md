@@ -13,3 +13,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 Antes de implementar, leer `NOTAS_PROYECTO.md` (raíz del proyecto): decisiones del usuario,
 schema correcto (`supabase/02_schema.sql`), credenciales, enums, bugs corregidos y estado actual.
 Actualizarlo cuando cambien decisiones o se resuelvan pendientes.
+
+Leer también `DOCUMENTO_FUNCIONAL.md` (raíz del proyecto): **viaje del usuario, flujos de
+estados y lógicas de negocio** definidos por el usuario. Si el código contradice ese
+documento, es una inconsistencia y hay que plantearla. Mantenerlo actualizado cuando el
+usuario defina nuevos flujos o reglas.
