@@ -67,14 +67,11 @@ export async function GET(request: NextRequest) {
       vendedora:usuarios!pedidos_vendedora_1_id_fkey(nombre)
     `);
 
-  const conds: any[] = [];
-  if (estado) conds.push(`estado=eq.${estado}`);
-  if (!incluirBorrador) conds.push(`estado=neq.borrador`);
-  if (soloPendientes) conds.push(`monto_total.gt.0`);
+  if (estado) query = query.eq("estado", estado);
+  if (!incluirBorrador) query = query.neq("estado", "borrador");
+  if (soloPendientes) query = query.gt("monto_total", 0);
   if (ocultos) query = query.eq("oculto", true);
   else query = query.eq("oculto", false);
-
-  if (conds.length > 0) query = query.or(conds.join(","));
 
   if (q) {
     query = query.or(`codigo.ilike.%${q}%,resumen_productos.ilike.%${q}%`);

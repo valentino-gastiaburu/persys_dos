@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-server.ps1",
+    "server:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-server.ps1 -Dev",
     "lint": "eslint"
   },
   "dependencies": {

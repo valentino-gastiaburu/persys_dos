@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button, Input, Select, Modal, ErrorBanner } from "@/components/ui";
 
 type Producto = { id: string; imei: string; nombre: string };
-type Talla = { id: string; nombre: string };
+type Talla = { id: string; nombre: string; cantidad: number };
 type Cliente = {
   id: string;
   nombre: string;
@@ -27,6 +27,26 @@ type Linea = {
   nombre: string;
 };
 
+const METODOS_POR_TIPO: Record<string, string[]> = {
+  envio: ["a_domicilio", "agencia"],
+  visita: ["a_domicilio", "local_peri"],
+};
+const EMPRESA_POR_TIPO: Record<string, string[]> = {
+  envio: ["olva", "shalom", "otros"],
+  visita: ["motorizado"],
+};
+const METODO_LABEL: Record<string, string> = {
+  a_domicilio: "A domicilio",
+  agencia: "Agencia",
+  local_peri: "Local PERI",
+};
+const EMPRESA_LABEL: Record<string, string> = {
+  motorizado: "Motorizado",
+  olva: "Olva",
+  shalom: "Shalom",
+  otros: "Otros",
+};
+
 export default function NuevoPedidoPage() {
   const router = useRouter();
 
@@ -34,14 +54,14 @@ export default function NuevoPedidoPage() {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [tallas, setTallas] = useState<Talla[]>([]);
   const [qCliente, setQCliente] = useState("");
-  const [buscarCliente, setBuscarCliente] = useState("");
+  const [clienteAbierto, setClienteAbierto] = useState(false);
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [showNuevoCliente, setShowNuevoCliente] = useState(false);
 
   const [fechaEntrega, setFechaEntrega] = useState("");
   const [tipoPedido, setTipoPedido] = useState("envio");
-  const [metodoEntrega, setMetodoEntrega] = useState("a_domicilio");
-  const [empresaEnvio, setEmpresaEnvio] = useState("motorizado");
+  const [metodoEntrega, setMetodoEntrega] = useState("agencia");
+  const [empresaEnvio, setEmpresaEnvio] = useState("olva");
   const [direccion, setDireccion] = useState("");
   const [ciudad, setCiudad] = useState("");
   const [ubicacionMaps, setUbicacionMaps] = useState("");
@@ -53,6 +73,8 @@ export default function NuevoPedidoPage() {
   const [observaciones, setObservaciones] = useState("");
 
   const [lineas, setLineas] = useState<Linea[]>([]);
+  const [prodQ, setProdQ] = useState("");
+  const [prodAbierto, setProdAbierto] = useState(false);
   const [selProducto, setSelProducto] = useState("");
   const [selTalla, setSelTalla] = useState("");
   const [selCantidad, setSelCantidad] = useState("1");
@@ -68,17 +90,26 @@ export default function NuevoPedidoPage() {
     );
   }, []);
 
+  // Sugerencias de cliente mientras se escribe
   useEffect(() => {
-    if (buscarCliente) {
-      api<{ clientes: Cliente[] }>("/api/clientes?q=" + encodeURIComponent(buscarCliente)).then(
-        ({ data }) => setClientes(data?.clientes ?? [])
-      );
+    const q = qCliente.trim();
+    if (!q) {
+      setClientes([]);
+      return;
     }
-  }, [buscarCliente]);
+    const t = setTimeout(async () => {
+      const { data } = await api<{ clientes: Cliente[] }>(
+        "/api/clientes?q=" + encodeURIComponent(q)
+      );
+      setClientes(data?.clientes ?? []);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [qCliente]);
 
   useEffect(() => {
     if (selProducto) {
       setSelTalla("");
+      setSelCantidad("1");
       api<{ tallas: Talla[] }>("/api/tallas?producto_id=" + selProducto).then(({ data }) =>
         setTallas(data?.tallas ?? [])
       );
@@ -87,15 +118,56 @@ export default function NuevoPedidoPage() {
     }
   }, [selProducto]);
 
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const fechaPasada = fechaEntrega ? fechaEntrega < hoyISO : false;
+
+  const tallaSel = tallas.find((t) => t.id === selTalla);
+  const disponible = tallaSel?.cantidad ?? 0;
+  const cantidadExcede = selTalla ? Number(selCantidad) > disponible : false;
+
+  const filtradosProd = useMemo(() => {
+    const q = prodQ.trim().toLowerCase();
+    if (!q) return productos.slice(0, 20);
+    return productos
+      .filter((p) => p.nombre.toLowerCase().includes(q) || p.imei.toLowerCase().includes(q))
+      .slice(0, 20);
+  }, [prodQ, productos]);
+
   const montoLineas = lineas.reduce((acc, l) => acc + l.cantidad * l.precio_unitario, 0);
   const total = montoLineas + Number(costoEnvio || 0);
 
+  function cambiarTipoPedido(tipo: string) {
+    setTipoPedido(tipo);
+    setMetodoEntrega(tipo === "envio" ? "agencia" : "a_domicilio");
+    setEmpresaEnvio(tipo === "envio" ? "olva" : "motorizado");
+  }
+
+  function elegirProducto(p: Producto) {
+    setSelProducto(p.id);
+    setProdQ(`${p.nombre} (${p.imei})`);
+    setProdAbierto(false);
+  }
+
   function agregarLinea() {
+    setError(null);
     if (!selProducto) return;
     const p = productos.find((x) => x.id === selProducto);
     const cant = Number(selCantidad);
     const precio = Number(selPrecio);
     if (!p || !cant || cant <= 0) return;
+
+    if (selTalla) {
+      const yaEnLineas = lineas
+        .filter((l) => l.producto_id === p.id && l.talla_id === selTalla)
+        .reduce((acc, l) => acc + l.cantidad, 0);
+      if (yaEnLineas + cant > disponible) {
+        setError(
+          `La cantidad supera el stock disponible (${disponible} unidad(es) en esa talla, ya tienes ${yaEnLineas} en la lista).`
+        );
+        return;
+      }
+    }
+
     setLineas((prev) => [
       ...prev,
       {
@@ -111,6 +183,7 @@ export default function NuevoPedidoPage() {
       },
     ]);
     setSelProducto("");
+    setProdQ("");
     setSelTalla("");
     setSelCantidad("1");
     setSelPrecio("");
@@ -202,41 +275,74 @@ export default function NuevoPedidoPage() {
                 </p>
                 <p className="text-xs text-slate-500">{cliente.telefono}</p>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setCliente(null)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setCliente(null);
+                  setQCliente("");
+                }}
+              >
                 Cambiar
               </Button>
             </div>
           ) : (
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Buscar por teléfono o nombre..."
-                  value={qCliente}
-                  onChange={(e) => setQCliente(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && setBuscarCliente(qCliente)}
-                />
-                <Button variant="secondary" onClick={() => setBuscarCliente(qCliente)}>
-                  Buscar
-                </Button>
-                <Button onClick={() => setShowNuevoCliente(true)}>Nuevo cliente</Button>
-              </div>
-              {clientes.length > 0 && (
-                <div className="max-h-56 space-y-1 overflow-y-auto">
-                  {clientes.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => setCliente(c)}
-                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-left hover:bg-slate-50"
-                    >
-                      <div>
-                        <p className="text-sm font-medium">
-                          {c.nombre} {c.apellido ?? ""}
-                        </p>
-                        <p className="text-xs text-slate-500">{c.telefono}</p>
-                      </div>
-                      <span className="text-xs text-blue-600">Seleccionar</span>
-                    </button>
-                  ))}
+            <div className="relative">
+              <Input
+                placeholder="Escribe el número o nombre del cliente..."
+                value={qCliente}
+                onChange={(e) => {
+                  setQCliente(e.target.value);
+                  setClienteAbierto(true);
+                }}
+                onFocus={() => setClienteAbierto(true)}
+                onBlur={() => setTimeout(() => setClienteAbierto(false), 150)}
+              />
+              {clienteAbierto && qCliente.trim() && (
+                <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                  <div className="max-h-56 overflow-y-auto">
+                    {clientes.length === 0 ? (
+                      <button
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setClienteAbierto(false);
+                          setShowNuevoCliente(true);
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-blue-50"
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-lg text-blue-600">
+                          +
+                        </span>
+                        <span>
+                          <span className="block text-sm font-medium text-blue-700">
+                            Agregar nuevo número
+                          </span>
+                          <span className="block text-xs text-slate-500">{qCliente}</span>
+                        </span>
+                      </button>
+                    ) : (
+                      clientes.map((c) => (
+                        <button
+                          key={c.id}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setCliente(c);
+                            setQCliente("");
+                            setClienteAbierto(false);
+                          }}
+                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-50"
+                        >
+                          <div>
+                            <p className="text-sm font-medium">
+                              {c.nombre} {c.apellido ?? ""}
+                            </p>
+                            <p className="text-xs text-slate-500">{c.telefono}</p>
+                          </div>
+                          <span className="text-xs text-blue-600">Seleccionar</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -246,27 +352,46 @@ export default function NuevoPedidoPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-5">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Entrega y pago</h2>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Input
-              label="Fecha de entrega"
-              type="date"
-              value={fechaEntrega}
-              onChange={(e) => setFechaEntrega(e.target.value)}
-              required
-            />
-            <Select label="Tipo de pedido" value={tipoPedido} onChange={(e) => setTipoPedido(e.target.value)}>
+            <div>
+              <Input
+                label="Fecha de entrega"
+                type="date"
+                value={fechaEntrega}
+                onChange={(e) => setFechaEntrega(e.target.value)}
+                danger={fechaPasada}
+                required
+              />
+              {fechaPasada && (
+                <p className="mt-1 text-xs font-medium text-red-600">
+                  La fecha seleccionada ya pasó. Igual podrás crear el pedido.
+                </p>
+              )}
+            </div>
+            <Select label="Tipo de pedido" value={tipoPedido} onChange={(e) => cambiarTipoPedido(e.target.value)}>
               <option value="envio">Envío</option>
               <option value="visita">Visita</option>
             </Select>
-            <Select label="Método de entrega" value={metodoEntrega} onChange={(e) => setMetodoEntrega(e.target.value)}>
-              <option value="a_domicilio">A domicilio</option>
-              <option value="agencia">Agencia</option>
-              <option value="local_peri">Local PERI</option>
+            <Select
+              label="Método de entrega"
+              value={metodoEntrega}
+              onChange={(e) => setMetodoEntrega(e.target.value)}
+            >
+              {METODOS_POR_TIPO[tipoPedido].map((m) => (
+                <option key={m} value={m}>
+                  {METODO_LABEL[m]}
+                </option>
+              ))}
             </Select>
-            <Select label="Empresa de envío" value={empresaEnvio} onChange={(e) => setEmpresaEnvio(e.target.value)}>
-              <option value="motorizado">Motorizado</option>
-              <option value="olva">Olva</option>
-              <option value="shalom">Shalom</option>
-              <option value="otros">Otros</option>
+            <Select
+              label="Empresa de envío"
+              value={empresaEnvio}
+              onChange={(e) => setEmpresaEnvio(e.target.value)}
+            >
+              {EMPRESA_POR_TIPO[tipoPedido].map((e) => (
+                <option key={e} value={e}>
+                  {EMPRESA_LABEL[e]}
+                </option>
+              ))}
             </Select>
             <Select label="Canal de venta" value={canalVenta} onChange={(e) => setCanalVenta(e.target.value)}>
               <option value="whatsapp">WhatsApp</option>
@@ -332,34 +457,74 @@ export default function NuevoPedidoPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-5">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Productos</h2>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-            <Select
-              label="Producto"
-              value={selProducto}
-              onChange={(e) => setSelProducto(e.target.value)}
-              className="md:col-span-2"
-            >
-              <option value="">Selecciona...</option>
-              {productos.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.nombre} ({p.imei})
-                </option>
-              ))}
-            </Select>
-            <Select label="Talla" value={selTalla} onChange={(e) => setSelTalla(e.target.value)}>
+            <div className="relative md:col-span-2">
+              <span className="mb-1 block font-medium text-slate-700">Producto</span>
+              <input
+                value={prodQ}
+                onChange={(e) => {
+                  setProdQ(e.target.value);
+                  setSelProducto("");
+                  setSelTalla("");
+                  setProdAbierto(true);
+                }}
+                onFocus={() => {
+                  setProdAbierto(true);
+                  if (selProducto) setProdQ("");
+                }}
+                onBlur={() => setTimeout(() => setProdAbierto(false), 150)}
+                placeholder="Escribe para buscar (nombre o IMEI)..."
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+              {prodAbierto && (
+                <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                  <div className="max-h-56 overflow-y-auto">
+                    {filtradosProd.length === 0 && (
+                      <p className="px-3 py-2 text-sm text-slate-400">Sin resultados.</p>
+                    )}
+                    {filtradosProd.map((p) => (
+                      <button
+                        key={p.id}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          elegirProducto(p);
+                        }}
+                        className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-50"
+                      >
+                        <div>
+                          <p className="text-sm font-medium">{p.nombre}</p>
+                          <p className="text-xs text-slate-500">{p.imei}</p>
+                        </div>
+                        <span className="text-xs text-blue-600">Elegir</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <Select label="Talla" value={selTalla} onChange={(e) => { setSelTalla(e.target.value); setSelCantidad("1"); }}>
               <option value="">Sin talla</option>
               {tallas.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.nombre}
+                  {t.nombre} ({t.cantidad})
                 </option>
               ))}
             </Select>
-            <Input
-              label="Cantidad"
-              type="number"
-              min={1}
-              value={selCantidad}
-              onChange={(e) => setSelCantidad(e.target.value)}
-            />
+            <div>
+              <Input
+                label="Cantidad"
+                type="number"
+                min={1}
+                max={selTalla ? disponible : undefined}
+                value={selCantidad}
+                onChange={(e) => setSelCantidad(e.target.value)}
+                danger={cantidadExcede}
+              />
+              {selTalla && (
+                <p className={`mt-1 text-xs ${cantidadExcede ? "font-medium text-red-600" : "text-slate-400"}`}>
+                  Disponible: {disponible} unidad(es)
+                </p>
+              )}
+            </div>
             <Input
               label="Precio unitario (S/)"
               type="number"
@@ -424,9 +589,11 @@ export default function NuevoPedidoPage() {
 
       {showNuevoCliente && (
         <NuevoClienteModal
+          telefonoInicial={qCliente}
           onClose={() => setShowNuevoCliente(false)}
           onCreated={(c) => {
             setShowNuevoCliente(false);
+            setQCliente("");
             setCliente(c);
           }}
         />
@@ -436,13 +603,15 @@ export default function NuevoPedidoPage() {
 }
 
 function NuevoClienteModal({
+  telefonoInicial,
   onClose,
   onCreated,
 }: {
+  telefonoInicial?: string;
   onClose: () => void;
   onCreated: (c: Cliente) => void;
 }) {
-  const [telefono, setTelefono] = useState("");
+  const [telefono, setTelefono] = useState(telefonoInicial ?? "");
   const [nombre, setNombre] = useState("");
   const [apellido, setApellido] = useState("");
   const [dni, setDni] = useState("");

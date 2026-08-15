@@ -14,6 +14,7 @@ export default function Sidebar({ user }: { user: SessionUser }) {
     { href: "/", label: "Inicio" },
     { href: "/pedidos", label: "Pedidos" },
     { href: "/productos", label: "Productos" },
+    { href: "/productos-unicos", label: "Productos Únicos" },
     { href: "/clientes", label: "Clientes" },
     { href: "/pagos", label: "Pagos" },
     { href: "/almacen", label: "Almacén / Viajes", show: esAlmacen },

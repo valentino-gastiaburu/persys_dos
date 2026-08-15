@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button, Input, Select, Badge, Spinner, ErrorBanner } from "@/components/ui";
 
@@ -48,6 +49,7 @@ type PedidoRow = {
 };
 
 export default function PedidosPage() {
+  const router = useRouter();
   const [pedidos, setPedidos] = useState<PedidoRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,46 +111,76 @@ export default function PedidosPage() {
       {loading ? (
         <Spinner />
       ) : (
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {pedidos.length === 0 && (
-            <p className="col-span-full py-10 text-center text-sm text-slate-400">No hay pedidos.</p>
-          )}
-          {pedidos.map((p) => (
-            <Link
-              key={p.id}
-              href={`/pedidos/${p.id}`}
-              className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition-shadow hover:shadow-md"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-semibold text-slate-800">{p.codigo}</span>
-                <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
-                  {ESTADO_LABEL[p.estado] ?? p.estado}
-                </Badge>
-              </div>
-              <p className="truncate text-sm text-slate-600">
-                {p.cliente_nombre ?? "Sin cliente"}
-                {p.cliente_telefono ? ` · ${p.cliente_telefono}` : ""}
-              </p>
-              <p className="truncate text-xs text-slate-400">
-                {p.resumen_productos ?? "Sin productos"}
-              </p>
-              <div className="mt-auto flex items-center justify-between pt-1">
-                <p className="text-sm font-semibold text-slate-800">
-                  S/ {Number(p.monto_total ?? 0).toFixed(2)}
-                </p>
-                {p.deuda > 0 ? (
-                  <p className="text-xs font-medium text-red-600">
-                    Deuda S/ {Number(p.deuda).toFixed(2)}
-                  </p>
-                ) : (
-                  <p className="text-xs font-medium text-emerald-600">Pagado</p>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-400">
-                {p.fecha_entrega ? new Date(p.fecha_entrega + "T00:00:00").toLocaleDateString("es-PE") : "Sin fecha"}
-              </p>
-            </Link>
-          ))}
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2">Fecha entrega</th>
+                <th className="px-4 py-2">Pedido</th>
+                <th className="px-4 py-2">Cliente</th>
+                <th className="px-4 py-2">N°</th>
+                <th className="px-4 py-2">Resumen</th>
+                <th className="px-4 py-2">Vendedora</th>
+                <th className="px-4 py-2 text-right">Total</th>
+                <th className="px-4 py-2 text-right">Deuda</th>
+                <th className="px-4 py-2">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pedidos.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-400">
+                    No hay pedidos.
+                  </td>
+                </tr>
+              )}
+              {pedidos.map((p) => (
+                <tr
+                  key={p.id}
+                  onClick={() => router.push(`/pedidos/${p.id}`)}
+                  className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                >
+                  <td className="whitespace-nowrap px-4 py-2 text-slate-600">
+                    {p.fecha_entrega
+                      ? new Date(p.fecha_entrega + "T00:00:00").toLocaleDateString("es-PE")
+                      : "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 font-mono font-semibold text-blue-700">
+                    {p.codigo}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 font-medium text-slate-800">
+                    {p.cliente_nombre ?? "Sin cliente"}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-600">
+                    {p.cliente_telefono ?? "—"}
+                  </td>
+                  <td className="max-w-[240px] truncate px-4 py-2 text-slate-600">
+                    {p.resumen_productos ?? "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-slate-600">
+                    {p.vendedora_nombre ?? "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-right font-semibold text-slate-800">
+                    S/ {Number(p.monto_total ?? 0).toFixed(2)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-right">
+                    {Number(p.deuda) > 0 ? (
+                      <span className="font-medium text-red-600">
+                        S/ {Number(p.deuda).toFixed(2)}
+                      </span>
+                    ) : (
+                      <span className="font-medium text-emerald-600">Pagado</span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2">
+                    <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
+                      {ESTADO_LABEL[p.estado] ?? p.estado}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

@@ -5,8 +5,10 @@ export const TIPO_TALLA_TIPOS: Record<string, string[]> = {
   A: ["A"],
   B: ["B"],
   C: ["C"],
+  AB: ["A", "B"],
   AC: ["A", "C"],
   BC: ["B", "C"],
+  ABC: ["A", "B", "C"],
   sin_talla: [],
 };
 
@@ -14,8 +16,10 @@ export const TIPO_TALLA_LABEL: Record<string, string> = {
   A: "A",
   B: "B",
   C: "C",
+  AB: "A + B",
   AC: "A + C",
   BC: "B + C",
+  ABC: "A + B + C",
   sin_talla: "Sin talla",
 };
 
@@ -103,10 +107,11 @@ export async function registrarHistorialProducto(params: {
   await supabase.from("historial_productos").insert(row);
 }
 
-// Devuelve productos con su stock por talla (vista tipo ProductosxTalla).
+// Devuelve productos con su stock por talla.
+// El stock es el conteo de productos_unicos existentes por talla (excluye eliminados).
 export async function listarProductos() {
   const supabase = getSupabase();
-  const [{ data: productos }, { data: stockRows }, { data: tallasRows }] =
+  const [{ data: productos }, { data: unidades }, { data: tallasRows }] =
     await Promise.all([
       supabase
         .from("productos")
@@ -114,30 +119,33 @@ export async function listarProductos() {
         .neq("estado", "eliminado")
         .order("nombre"),
       supabase
-        .from("v_productosx_talla")
-        .select("producto_id, talla, cantidad, stock_almacen, precio"),
-      supabase
-        .from("producto_tallas")
-        .select("producto_id, talla_id"),
+        .from("productos_unicos")
+        .select("producto_id, talla_id")
+        .neq("estado", "eliminado"),
+      supabase.from("tallas").select("id, tipo, nombre"),
     ]);
 
-  const tallasById: Record<string, string> = {};
-  for (const r of tallasRows ?? []) tallasById[r.talla_id] = r.talla_id;
-
-  // talla nombre lookup from v (contains talla name) — build from stockRows
-  const stockPorProducto: Record<string, any[]> = {};
-  for (const s of stockRows ?? []) {
-    stockPorProducto[s.producto_id] = stockPorProducto[s.producto_id] ?? [];
-    stockPorProducto[s.producto_id].push(s);
+  const tallaTipo: Record<string, string> = {};
+  const tallaNombre: Record<string, string> = {};
+  for (const t of tallasRows ?? []) {
+    tallaTipo[t.id] = t.tipo;
+    tallaNombre[t.id] = t.nombre;
   }
 
-  return (productos ?? []).map((p: any) => {
-    let stock = stockPorProducto[p.id] ?? [];
-    stock = [...stock].sort((a, b) =>
-      (a.talla ?? "").localeCompare(b.talla ?? "", undefined, {
-        numeric: true,
-      })
-    );
-    return { ...p, stock };
-  });
+  // conteos[productoId][tipo][nombreTalla] = cantidad
+  const conteos: Record<string, Record<string, Record<string, number>>> = {};
+  for (const u of unidades ?? []) {
+    const tipo = tallaTipo[u.talla_id];
+    const nombre = tallaNombre[u.talla_id];
+    if (!tipo || !nombre) continue;
+    conteos[u.producto_id] = conteos[u.producto_id] ?? {};
+    conteos[u.producto_id][tipo] = conteos[u.producto_id][tipo] ?? {};
+    conteos[u.producto_id][tipo][nombre] =
+      (conteos[u.producto_id][tipo][nombre] ?? 0) + 1;
+  }
+
+  return (productos ?? []).map((p: any) => ({
+    ...p,
+    stock: conteos[p.id] ?? {},
+  }));
 }

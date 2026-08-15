@@ -37,13 +37,18 @@ export function Button({
 export function Input({
   label,
   className = "",
+  danger = false,
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement> & { label?: string }) {
+}: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; danger?: boolean }) {
   return (
     <label className="block text-sm">
       {label && <span className="mb-1 block font-medium text-slate-700">{label}</span>}
       <input
-        className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${className}`}
+        className={`w-full rounded-lg border bg-white px-3 py-2 text-sm outline-none ${
+          danger
+            ? "border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-100"
+            : "border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        } ${className}`}
         {...props}
       />
     </label>
