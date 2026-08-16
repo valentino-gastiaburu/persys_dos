@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { calcularTotal } from "@/lib/pedidos";
+import { sincronizarTotalesPedido } from "@/lib/pedidos";
 import { getStockVentasPorTalla } from "@/lib/productos";
 
 // POST /api/pedidos/[id]/detalles — agrega un detalle al pedido (borrador)
@@ -73,21 +73,24 @@ export async function POST(
     return Response.json({ error: `No se pudo agregar el detalle: ${err?.message ?? "sin detalle"}` }, { status: 500 });
   }
 
-  // Recalcular monto_total del pedido
-  const detalles = await supabase
-    .from("detalles_pedido")
-    .select("subtotal")
+  // Si el pedido ya tiene viaje de entrega, la línea nueva pertenece a ese viaje
+  // (el pedido es una colección de viajes; cada producto vive en el suyo).
+  const { data: viaje } = await supabase
+    .from("viajes")
+    .select("id")
     .eq("pedido_id", id)
-    .eq("estado", "activo");
-  const { data: pedidoActual } = await supabase
-    .from("pedidos")
-    .select("costo_envio")
-    .eq("id", id)
-    .single();
-  const montoTotal = calcularTotal(
-    (detalles.data ?? []).map((d) => ({ subtotal: Number(d.subtotal) })),
-    Number(pedidoActual?.costo_envio ?? 0)
-  );
+    .eq("tipo", "entrega")
+    .order("creado_el")
+    .limit(1)
+    .maybeSingle();
+  if (viaje) {
+    await supabase
+      .from("detalles_pedido")
+      .update({ viaje_id: viaje.id, confirmado_el: new Date().toISOString() })
+      .eq("id", detalle.id);
+  }
+
+  const montoTotal = await sincronizarTotalesPedido(id);
   await supabase.from("pedidos").update({ monto_total: montoTotal }).eq("id", id);
 
   return Response.json({ detalle, monto_total: montoTotal }, { status: 201 });

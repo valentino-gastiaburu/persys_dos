@@ -25,16 +25,17 @@ export async function GET(
     .single();
   if (err || !viaje) return Response.json({ error: "Viaje no encontrado" }, { status: 404 });
 
-  // Productos a alistar: detalles activos del viaje (imei, talla, cantidad)
+  // Productos a alistar: líneas del viaje (activos en entregas,
+  // pendiente_devolucion en regresos). Nunca se muestran las ocultas.
   const { data: detalles } = await supabase
     .from("detalles_pedido")
     .select(`
-      id, producto_id, talla_stock, talla_vendida, cantidad, es_extra_motorizado, entalle,
+      id, producto_id, talla_stock, talla_vendida, cantidad, es_extra_motorizado, entalle, estado,
       productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre),
       tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
     `)
     .eq("viaje_id", id)
-    .eq("estado", "activo")
+    .not("estado", "eq", "oculto")
     .order("creado_el");
 
   // Unidades ya alistadas en este viaje
@@ -70,9 +71,11 @@ export async function GET(
       cantidad: Number(d.cantidad),
       es_extra_motorizado: d.es_extra_motorizado,
       entalle: d.entalle,
+      estado: d.estado,
       alistados: lista.length,
       falta,
       completo: falta <= 0,
+      devuelto: d.estado === "devuelto",
     };
   });
 
@@ -117,12 +120,13 @@ export async function PATCH(
   }
 
   // Al "alistado" se exige que todas las unidades del viaje estén alistadas
-  if (nuevoEstado === "alistado" && viaje.tipo === "entrega") {
+  // (vale para entregas y regresos).
+  if (nuevoEstado === "alistado") {
     const { data: detalles } = await supabase
       .from("detalles_pedido")
       .select("id, cantidad")
       .eq("viaje_id", id)
-      .eq("estado", "activo");
+      .not("estado", "eq", "oculto");
     const { data: alistados } = await supabase
       .from("viaje_producto_unicos")
       .select("detalle_pedido_id")
@@ -217,7 +221,13 @@ export async function PATCH(
         );
       }
     } else {
-      // Recojo: los productos vuelven a almacén (devueltos)
+      // Recojo: los productos vuelven a almacén (devueltos) y las líneas del
+      // regreso pasan a "devuelto" (dejaron de estar pendientes).
+      await supabase
+        .from("detalles_pedido")
+        .update({ estado: "devuelto" })
+        .eq("viaje_id", id)
+        .eq("estado", "pendiente_devolucion");
       if (unicoIds.length > 0) {
         await supabase
           .from("productos_unicos")

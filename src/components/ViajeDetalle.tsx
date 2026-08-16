@@ -27,6 +27,8 @@ type Item = {
   falta: number;
   completo: boolean;
   entalle: boolean;
+  estado: string;
+  devuelto: boolean;
 };
 
 type Alistado = {
@@ -178,7 +180,9 @@ export default function ViajeDetalle() {
       )}
 
       <section className="mb-4 rounded-xl border border-slate-200 bg-white p-5">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Productos a alistar</h2>
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">
+          {viaje.tipo === "recojo" ? "Productos a recoger" : "Productos a alistar"}
+        </h2>
         <div className="space-y-2">
           {items.map((i) => (
             <div key={i.detalle_id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
@@ -191,7 +195,8 @@ export default function ViajeDetalle() {
                   {i.talla_stock_nombre ? ` · entalle desde ${i.talla_stock_nombre}` : ""}
                 </p>
               </div>
-              <div className="text-right">
+              <div className="flex items-center gap-2 text-right">
+                {i.devuelto && <Badge color="green">Devuelto</Badge>}
                 <p className="text-sm font-semibold">
                   {i.alistados}/{i.cantidad}
                 </p>

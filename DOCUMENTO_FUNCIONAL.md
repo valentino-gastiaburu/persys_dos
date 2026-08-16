@@ -5,7 +5,7 @@
 > `NOTAS_PROYECTO.md`. Si algo del código contradice esto, es una **inconsistencia**
 > y hay que plantearla, no ignorarla.
 >
-> Última actualización: 15/ago/2026
+> Última actualización: 16/ago/2026
 
 ---
 
@@ -22,6 +22,7 @@
 |---|---|
 | Pedidos (crear/confirmar/estado/pagos/detalles) | vendedora, agendadora, controller, admin |
 | Pedidos (ver) | + almacen |
+| **Crear viajes (entrega extra / regreso)** | vendedora, agendadora, controller, admin |
 | Viajes (ver, cambiar estado) | almacen, controller, admin, vendedora, agendadora |
 | Alistar viaje (escanear QR) | almacen, controller, admin |
 | Productos / tallas / productos únicos (ver) | todos |
@@ -64,9 +65,14 @@
    pedido → `enviado`.
 6. **Entrega**: viaje **terminado** → unidades `entregadas`, pedido → `entregado`,
    luego `cerrado`.
-7. **Devoluciones/cambios**: se crea viaje tipo **recojo**. Mientras esté pendiente,
-   el pedido queda `esperando_devolucion` o `esperando_cambio`. Al terminar el
-   recojo, las unidades vuelven a almacén (kardex de entrada).
+7. **Después de entregado** (ver §4.7), el pedido **solo se modifica con viajes**:
+   - **Viaje de regreso (recojo)**: quita productos (devolución o cambio). Los productos
+     desaparecen del viaje de entrega original y pasan a estar **pendientes de devolución**
+     en el viaje de regreso. Al terminar el recojo las líneas quedan `devuelto` y las
+     unidades vuelven a almacén con su talla actual (kardex de entrada). El pedido queda
+     `esperando_devolucion`/`esperando_cambio` mientras el recojo esté pendiente.
+   - **Viaje de entrega extra**: agrega productos con su propia fecha, dirección y costo de
+     envío; un pedido entregado que recibe un viaje extra vuelve a `confirmado`.
 8. **Cancelación**: manual desde `solicitado` o `confirmado` (ver §3).
 9. **Pagos**: registrar pagos (monto + método); la deuda se calcula
    `monto_total − pagado`.
@@ -108,10 +114,14 @@
 - `confirmado` → `solicitado` (Volver a Solicitar), `cancelado`
 
 **Automáticas** (`syncEstadoPedidoPorViajes` en `lib/pedidos.ts`):
-- `confirmado` → `alistado` cuando el **viaje de entrega** pasa a `alistado`;
-  luego `enviado` y `entregado` siguiendo al viaje.
-- Con un **recojo pendiente** → `esperando_devolucion` / `esperando_cambio`.
-- Cuando todos los viajes terminan → `entregado`.
+- **Regla de rank mínimo entre viajes de entrega:** el pedido sigue al viaje de
+  entrega **menos avanzado** — `programado`→`confirmado`, `alistado`→`alistado`,
+  `enviado`→`enviado`, todos `terminado`→`entregado`. Un pedido entregado que
+  recibe un viaje de entrega extra vuelve a `confirmado` hasta que TODOS sus
+  viajes avancen.
+- Con un **recojo pendiente** → `esperando_devolucion` / `esperando_cambio`
+  (por encima de todo).
+- Sin viajes → `confirmado`.
 
 ---
 
@@ -127,9 +137,11 @@
 
 ### 4.2 Confirmación del pedido
 
-- Calcula `monto_total` = suma de subtotales de detalles activos + `costo_envio`.
+- Calcula `monto_total` = suma de subtotales de detalles activos + `costo_envio`
+  (también queda en el **`total` del viaje de entrega** que se crea).
 - Genera `resumen_productos` con formato `IMEI (cant/talla/género)`.
-- Crea el viaje de entrega `programado` y asigna los detalles al viaje.
+- Crea el viaje de entrega `programado` (con `fecha`, `direccion`, `costo_envio`
+  y `total`) y asigna los detalles al viaje.
 - Si `monto_primer_pago > 0` inserta un pago `tipo = primer_pago`.
 - Guarda `confirmado_el` y registra el cambio en `historial_pedidos`.
 
@@ -186,14 +198,16 @@
 
 ### 4.5 Alistado de viajes (escanear QR)
 
-- El producto debe estar `en_almacen` y pertenecer al listado del viaje.
-- Coincide talla exacta: la unidad escaneada debe tener `talla_id == talla_stock`
+- **Entrega:** el producto debe estar `en_almacen` y pertenecer al listado del viaje.
+  Coincide talla exacta: la unidad escaneada debe tener `talla_id == talla_stock`
   (la talla que hay en almacén). Si el detalle tiene **entalle**
   (`talla_stock != talla_vendida`), luego se entalla a la **talla vendida** (destino).
+- **Recojo:** el producto debe estar **`entregado`** y pertenecer al listado del
+  regreso; la talla que coincide es la que tiene la unidad entregada (`talla_vendida`).
 - No puede exceder la `cantidad` del detalle. No se puede alistar en un viaje ya
   `enviado`/`terminado` ni un QR ya alistado en el viaje.
 - Para marcar el viaje **alistado** se exige que **todas** las unidades del viaje
-  estén alistadas.
+  estén alistadas (vale para entregas y regresos).
 
 ### 4.6 Envío / término de viajes
 
@@ -201,13 +215,43 @@
   puede retroceder.**
 - `enviado`: unidades pasan a `en_viaje` + kardex `salida`.
 - `terminado` (entrega): unidades `entregado`.
-- `terminado` (recojo): unidades vuelven a `en_almacen` + kardex `entrada`.
+- `terminado` (recojo): las líneas del regreso pasan de `pendiente_devolucion` a
+  **`devuelto`** y las unidades vuelven a `en_almacen` + kardex `entrada`.
 
-### 4.7 Códigos
+### 4.7 Pedido = colección de viajes (viajes extra y devoluciones)
+
+- Cuando un pedido está **`entregado`** (o `esperando_*`/`cerrado`), la única forma
+  de modificarlo es **mediante viajes** (`POST /api/viajes`). Quién: vendedora,
+  agendadora, controller y admin. El detalle del pedido muestra una **tarjeta por
+  viaje** con sus productos; la tabla de productos del pedido se oculta (cada viaje
+  lleva los suyos).
+- **Viaje de regreso (recojo):** `{ tipo: "recojo", motivo, lineas: [{detalle_id,
+  cantidad, precio_devolucion}] }`. Solo en pedidos entregados. Al crearlo:
+  - Se crean líneas espejo con estado `pendiente_devolucion` y `devolucion_de`
+    apuntando a la línea original.
+  - La línea original **reduce su cantidad**; si se devuelve todo, pasa a `oculto`
+    (sale del viaje de entrega y de todos los listados). Soporta **devolución
+    parcial** (2 unidades → devuelven 1 → la original queda con 1).
+  - Cada prenda tiene un **costo a devolver** editable (default = precio original;
+    **0 permitido**). El `total` del regreso = Σ subtotales de sus líneas.
+  - El `costo_envio` de un regreso es **informativo** (no se descuenta del pedido).
+  - Al terminar el recojo, la unidad vuelve al almacén **con su talla actual** (no
+    se restaura la talla original; por eso el entalle se mantiene).
+- **Viaje de entrega extra:** `{ tipo: "entrega", fecha, direccion?, costo_envio,
+  lineas[] }`. Valida stock como un pedido nuevo (`validarStockLineas`). Prohibido
+  en `borrador`/`solicitado`/`cancelado`/`devuelto` (el primer viaje lo crea la
+  confirmación). El `costo_envio` del viaje extra **sí suma** al total del pedido.
+- **Totales:** cada viaje tiene su propio `total` (`Σ subtotales + costo_envio` en
+  entregas). `monto_total` del pedido = Σ totales de **entregas − Σ totales de
+  regresos**, recalculado con `calcularTotalPedido` al crear/editar viajes.
+- En el detalle, tras cada operación se regeneran `resumen_productos`, `monto_total`
+  y el estado (regla de rank mínimo, ver §3).
+
+### 4.8 Códigos
 
 - Pedido: 8 caracteres aleatorios únicos. Viaje: `V` + 7 caracteres.
 
-### 4.8 Lista de pedidos
+### 4.9 Lista de pedidos
 
 - Filtros por estado (incluye **Borrador**) y búsqueda (código o resumen). Por defecto
   no muestra borradores ni pedidos ocultos. El controller ve todos.
@@ -233,9 +277,11 @@
 2. **Cancelar un pedido confirmado**: ¿qué pasa con el viaje programado y las
    unidades que ya se alistaron?
 3. **Password en texto plano** (riesgo; MVP). ¿Migrar a hash?
-4. **Pendientes SQL**: `03_tandas`, `04_tallas`, `05_pedidos_equipo` y
-   `07_talla_stock_vendida` ya están en Supabase (07 corrida el 16/ago/2026;
-   `detalles_pedido` usa `talla_stock`/`talla_vendida`).
+4. **Pendientes SQL**: `03_tandas`, `04_tallas`, `05_pedidos_equipo`,
+   `07_talla_stock_vendida` y `08_viajes_extras` ya están en Supabase
+   (07 corrida el 16/ago/2026; `detalles_pedido` usa `talla_stock`/`talla_vendida`;
+   08 agrega `viajes.total/costo_envio/direccion`, `detalles_pedido.devolucion_de`
+   y los estados `pendiente_devolucion`/`devuelto`).
 5. **Datos de prueba "SMOKE"** quedaron en la BD. ¿Limpiarlos?
 6. El enum `tipo_talla` del `02_schema.sql` no incluye `AB`/`ABC` (solo los agrega
    `04_tallas.sql`). Al reconstruir la BD hay que correr ambos.

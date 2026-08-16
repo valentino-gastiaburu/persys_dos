@@ -1,6 +1,264 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import {
+  generarCodigoViaje,
+  recalcularTotalViaje,
+  calcularTotalPedido,
+  syncEstadoPedidoPorViajes,
+  generarResumen,
+  registrarHistorialPedido,
+  getDetallesActivos,
+} from "@/lib/pedidos";
+import { validarStockLineas } from "@/lib/productos";
+
+// POST /api/viajes — crea un viaje extra sobre un pedido.
+// Body para tipo "entrega" (agregar productos):
+//   { pedido_id, tipo: "entrega", fecha, direccion?, costo_envio?, lineas: LineaStock[] }
+// Body para tipo "recojo" (devolución/cambio):
+//   { pedido_id, tipo: "recojo", motivo: "devolucion"|"cambio", fecha?, lineas: [{detalle_id, cantidad, precio_devolucion}] }
+// Tras crear, recalcula el total del pedido y sincroniza su estado.
+export async function POST(request: NextRequest) {
+  const { user, error } = await requireRoles(["vendedora", "agendadora", "controller", "admin"]);
+  if (error) return error;
+
+  const body = await request.json();
+  const supabase = getSupabase();
+  const tipo: string = body.tipo;
+
+  if (!["entrega", "recojo"].includes(tipo)) {
+    return Response.json({ error: "Tipo de viaje inválido" }, { status: 400 });
+  }
+
+  const { data: pedido } = await supabase
+    .from("pedidos")
+    .select("*")
+    .eq("id", body.pedido_id)
+    .single();
+  if (!pedido) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
+
+  if (tipo === "entrega") {
+    // Solo en pedidos ya confirmados (el primer viaje lo crea "Confirmar pedido")
+    // y no cerrados ni devueltos.
+    if (["borrador", "solicitado", "cancelado", "devuelto"].includes(pedido.estado)) {
+      return Response.json(
+        { error: "Este pedido aún no admite agregar viajes de entrega" },
+        { status: 400 }
+      );
+    }
+
+    const lineas: {
+      producto_id: string;
+      talla_stock: string | null;
+      talla_vendida: string | null;
+      cantidad: number;
+      precio_unitario?: number;
+      entalle?: boolean;
+      genero?: string;
+      es_extra_motorizado?: boolean;
+    }[] = body.lineas ?? [];
+    if (lineas.length === 0) {
+      return Response.json({ error: "El viaje no tiene productos" }, { status: 400 });
+    }
+    for (const l of lineas) {
+      l.talla_vendida = l.entalle ? (l.talla_vendida ?? l.talla_stock) : l.talla_stock;
+    }
+    const { conflictos } = await validarStockLineas(lineas);
+    if (conflictos.length > 0) {
+      return Response.json(
+        { error: "Stock insuficiente para algunos productos", conflictos },
+        { status: 409 }
+      );
+    }
+
+    const costoEnvio = Number(body.costo_envio ?? 0);
+    const direccion = body.direccion || pedido.direccion_entrega || null;
+    const viajeCodigo = await generarCodigoViaje();
+    const { data: viaje, error: viajeErr } = await supabase
+      .from("viajes")
+      .insert({
+        codigo: viajeCodigo,
+        pedido_id: pedido.id,
+        tipo: "entrega",
+        estado: "programado",
+        fecha: body.fecha || new Date().toISOString().slice(0, 10),
+        direccion,
+        costo_envio: costoEnvio,
+        total: 0,
+        creado_por: user.id,
+      })
+      .select()
+      .single();
+    if (viajeErr || !viaje) {
+      return Response.json({ error: "No se pudo crear el viaje" }, { status: 500 });
+    }
+
+    const detalles = lineas.map((l) => {
+      const precioUnitario = Number(l.precio_unitario ?? 0);
+      const tallaStock = l.talla_stock || null;
+      const tallaVendida = l.talla_vendida || null;
+      return {
+        pedido_id: pedido.id,
+        viaje_id: viaje.id,
+        producto_id: l.producto_id,
+        talla_stock: tallaStock,
+        talla_vendida: tallaVendida,
+        entalle: Boolean(tallaStock && tallaVendida && tallaStock !== tallaVendida),
+        cantidad: Number(l.cantidad),
+        precio_unitario: precioUnitario,
+        subtotal: Number(l.cantidad) * precioUnitario,
+        genero: l.genero || "dama",
+        es_extra_motorizado: Boolean(l.es_extra_motorizado),
+        anadido_por: user.id,
+        confirmado_el: new Date().toISOString(),
+      };
+    });
+    const { error: errDetalles } = await supabase.from("detalles_pedido").insert(detalles);
+    if (errDetalles) {
+      await supabase.from("viajes").delete().eq("id", viaje.id);
+      return Response.json({ error: "No se pudieron registrar los productos" }, { status: 500 });
+    }
+
+    const total = await recalcularTotalViaje(viaje.id, "entrega", costoEnvio);
+    await refrescarPedido(pedido.id, user.id);
+    return Response.json({ viaje: { ...viaje, total } }, { status: 201 });
+  }
+
+  // tipo === "recojo"
+  if (!["entregado", "esperando_devolucion", "esperando_cambio", "cerrado"].includes(pedido.estado)) {
+    return Response.json(
+      { error: "Solo se pueden registrar devoluciones en pedidos ya entregados" },
+      { status: 400 }
+    );
+  }
+  const motivo: string = body.motivo;
+  if (!["devolucion", "cambio"].includes(motivo)) {
+    return Response.json({ error: "Indica un motivo de regreso (devolución o cambio)" }, { status: 400 });
+  }
+  const lineas: { detalle_id: string; cantidad: number; precio_devolucion?: number }[] = body.lineas ?? [];
+  if (lineas.length === 0) {
+    return Response.json({ error: "El viaje de regreso no tiene productos" }, { status: 400 });
+  }
+  const ids = lineas.map((l) => l.detalle_id);
+  const { data: orig } = await supabase
+    .from("detalles_pedido")
+    .select("*")
+    .in("id", ids);
+  const porId = new Map((orig ?? []).map((d: any) => [d.id, d]));
+  for (const l of lineas) {
+    const d = porId.get(l.detalle_id);
+    if (!d || d.pedido_id !== pedido.id) {
+      return Response.json({ error: "Línea de producto inválida" }, { status: 400 });
+    }
+    if (d.estado !== "activo") {
+      return Response.json({ error: "El producto ya fue devuelto" }, { status: 400 });
+    }
+    const cant = Number(l.cantidad);
+    if (!cant || cant <= 0) {
+      return Response.json({ error: "Indica una cantidad válida a devolver" }, { status: 400 });
+    }
+    if (cant > Number(d.cantidad)) {
+      return Response.json(
+        { error: `No puedes devolver ${cant} si solo hay ${d.cantidad}` },
+        { status: 400 }
+      );
+    }
+  }
+
+  const viajeCodigo = await generarCodigoViaje();
+  const { data: viaje, error: viajeErr } = await supabase
+    .from("viajes")
+    .insert({
+      codigo: viajeCodigo,
+      pedido_id: pedido.id,
+      tipo: "recojo",
+      motivo_recojo: motivo,
+      estado: "programado",
+      fecha: body.fecha || new Date().toISOString().slice(0, 10),
+      costo_envio: 0,
+      total: 0,
+      creado_por: user.id,
+    })
+    .select()
+    .single();
+  if (viajeErr || !viaje) {
+    return Response.json({ error: "No se pudo crear el viaje" }, { status: 500 });
+  }
+
+  for (const l of lineas) {
+    const d: any = porId.get(l.detalle_id);
+    const precioDev = Number(l.precio_devolucion ?? d.precio_unitario);
+    const cant = Number(l.cantidad);
+    await supabase.from("detalles_pedido").insert({
+      pedido_id: pedido.id,
+      viaje_id: viaje.id,
+      devolucion_de: d.id,
+      producto_id: d.producto_id,
+      talla_stock: d.talla_stock,
+      talla_vendida: d.talla_vendida,
+      entalle: d.entalle,
+      cantidad: cant,
+      precio_unitario: precioDev,
+      subtotal: cant * precioDev,
+      genero: d.genero,
+      es_extra_motorizado: d.es_extra_motorizado,
+      estado: "pendiente_devolucion",
+      anadido_por: user.id,
+    });
+    const nuevaCant = Number(d.cantidad) - cant;
+    await supabase
+      .from("detalles_pedido")
+      .update({
+        cantidad: nuevaCant,
+        subtotal: nuevaCant * Number(d.precio_unitario || 0),
+        estado: nuevaCant <= 0 ? "oculto" : "activo",
+      })
+      .eq("id", d.id);
+    if (d.viaje_id) {
+      const { data: vOrigen } = await supabase
+        .from("viajes")
+        .select("costo_envio")
+        .eq("id", d.viaje_id)
+        .maybeSingle();
+      await recalcularTotalViaje(d.viaje_id, "entrega", Number(vOrigen?.costo_envio ?? 0));
+    }
+  }
+
+  await recalcularTotalViaje(viaje.id, "recojo", 0);
+  await refrescarPedido(pedido.id, user.id);
+  return Response.json({ viaje }, { status: 201 });
+}
+
+// Recalcula resumen, total y estado del pedido tras cambios en sus viajes.
+async function refrescarPedido(pedidoId: string, userId: string) {
+  const supabase = getSupabase();
+  const detalles = await getDetallesActivos(pedidoId);
+  const resumen = await generarResumen(
+    detalles.map((d: any) => ({
+      producto_id: d.producto_id,
+      cantidad: d.cantidad,
+      talla: d.talla_vendida_nombre ?? null,
+      genero: d.genero,
+      es_extra_motorizado: d.es_extra_motorizado,
+    }))
+  );
+  const nuevoEstado = await syncEstadoPedidoPorViajes(pedidoId);
+  const montoTotal = await calcularTotalPedido(pedidoId);
+  const { data: pedido } = await supabase.from("pedidos").select("estado").eq("id", pedidoId).single();
+  if (pedido && pedido.estado !== nuevoEstado) {
+    await registrarHistorialPedido({
+      pedido_id: pedidoId,
+      estado_anterior: pedido.estado,
+      estado_nuevo: nuevoEstado,
+      persona_id: userId,
+      motivo: "Actualización de viajes",
+    });
+  }
+  await supabase
+    .from("pedidos")
+    .update({ estado: nuevoEstado, monto_total: montoTotal, resumen_productos: resumen })
+    .eq("id", pedidoId);
+}
 
 // GET /api/viajes?fecha=YYYY-MM-DD&estado= — lista viajes para el almacén
 export async function GET(request: NextRequest) {

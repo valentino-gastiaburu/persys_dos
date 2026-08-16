@@ -34,6 +34,13 @@ const ESTADO_LABEL: Record<string, string> = {
   devuelto: "Devuelto",
 };
 
+const VIAJE_ESTADO_LABEL: Record<string, string> = {
+  programado: "Programado",
+  alistado: "Alistado",
+  enviado: "Enviado",
+  terminado: "Terminado",
+};
+
 type Pedido = {
   id: string;
   codigo: string;
@@ -83,7 +90,32 @@ type Detalle = {
 };
 
 type Pago = { id: string; monto: number; metodo_pago: string; tipo: string; fecha: string };
-type Viaje = { id: string; codigo: string; tipo: string; estado: string; fecha: string | null };
+type ViajeLinea = {
+  id: string;
+  imei: string;
+  producto_nombre: string;
+  talla_stock_nombre: string | null;
+  talla_vendida_nombre: string | null;
+  cantidad: number;
+  precio_unitario: number;
+  subtotal: number;
+  entalle: boolean;
+  es_extra_motorizado: boolean;
+  estado: string;
+  devolucion: boolean;
+};
+type Viaje = {
+  id: string;
+  codigo: string;
+  tipo: string;
+  motivo_recojo: string | null;
+  estado: string;
+  fecha: string | null;
+  direccion: string | null;
+  costo_envio: number;
+  total: number;
+  lineas: ViajeLinea[];
+};
 
 export default function PedidoDetallePage() {
   const params = useParams<{ id: string }>();
@@ -96,9 +128,18 @@ export default function PedidoDetallePage() {
   const [totalPagado, setTotalPagado] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [rol, setRol] = useState<string | null>(null);
   const [showPago, setShowPago] = useState(false);
   const [showEditarPedido, setShowEditarPedido] = useState(false);
   const [showEditarProductos, setShowEditarProductos] = useState(false);
+  const [showNuevoViajeEntrega, setShowNuevoViajeEntrega] = useState(false);
+  const [showViajeRegreso, setShowViajeRegreso] = useState(false);
+
+  useEffect(() => {
+    api<{ user: { rol: string } }>("/api/auth/me").then(({ data }) => {
+      setRol(data?.user?.rol ?? null);
+    });
+  }, []);
 
   const cargar = useCallback(async () => {
     const { data, error } = await api<{
@@ -132,6 +173,12 @@ export default function PedidoDetallePage() {
   const puedeCancelar = ["solicitado", "confirmado"].includes(pedido.estado);
   const puedeVolverSolicitado = pedido.estado === "confirmado";
   const puedeEditar = ["borrador", "solicitado", "confirmado", "alistado"].includes(pedido.estado);
+  const puedeCrearViajes =
+    rol != null && ["vendedora", "agendadora", "controller", "admin"].includes(rol);
+  const pedidoEntregado = ["entregado", "esperando_devolucion", "esperando_cambio", "cerrado"].includes(
+    pedido.estado
+  );
+  const gestionarViajes = !puedeEditar && pedidoEntregado && puedeCrearViajes;
 
   async function confirmar() {
     setError(null);
@@ -206,48 +253,58 @@ export default function PedidoDetallePage() {
               )}
             </div>
             <div className="p-5">
-              {detalles.length === 0 ? (
-                <p className="text-sm text-slate-400">Sin productos.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse border border-slate-300 text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-300 bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
-                        <th className="border-r border-slate-200 px-3 py-2 font-bold">IMEI</th>
-                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Producto</th>
-                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Talla</th>
-                        <th className="border-r border-slate-200 px-3 py-2 text-right font-bold">Cantidad</th>
-                        <th className="px-3 py-2 text-right font-bold">Costo total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {detalles.map((d) => (
-                        <tr key={d.id}>
-                          <td className="border-r border-slate-200 px-3 py-2 font-mono text-xs text-slate-500">{d.imei}</td>
-                          <td className="border-r border-slate-200 px-3 py-2 font-medium text-slate-800">
-                            {d.producto_nombre}
-                            {d.es_extra_motorizado ? " · +motorizado" : ""}
-                          </td>
-                          <td className="border-r border-slate-200 px-3 py-2 text-slate-600">
-                            {d.entalle
-                              ? `${d.talla_stock_nombre ?? "—"} → ${d.talla_vendida_nombre ?? "Sin talla"}`
-                              : d.talla_vendida_nombre ?? "Sin talla"}
-                          </td>
-                          <td className="border-r border-slate-200 px-3 py-2 text-right">
-                            <span className="text-slate-600">{d.cantidad}</span>
-                            <span className="ml-1 text-xs text-slate-400">x S/ {Number(d.precio_unitario).toFixed(2)}</span>
-                          </td>
-                          <td className="px-3 py-2 text-right font-semibold text-slate-800">
-                            S/ {Number(d.subtotal).toFixed(2)}
-                          </td>
+              {puedeEditar ? (
+                detalles.length === 0 ? (
+                  <p className="text-sm text-slate-400">Sin productos.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse border border-slate-300 text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-300 bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
+                          <th className="border-r border-slate-200 px-3 py-2 font-bold">IMEI</th>
+                          <th className="border-r border-slate-200 px-3 py-2 font-bold">Producto</th>
+                          <th className="border-r border-slate-200 px-3 py-2 font-bold">Talla</th>
+                          <th className="border-r border-slate-200 px-3 py-2 text-right font-bold">Cantidad</th>
+                          <th className="px-3 py-2 text-right font-bold">Costo total</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {detalles.map((d) => (
+                          <tr key={d.id}>
+                            <td className="border-r border-slate-200 px-3 py-2 font-mono text-xs text-slate-500">{d.imei}</td>
+                            <td className="border-r border-slate-200 px-3 py-2 font-medium text-slate-800">
+                              {d.producto_nombre}
+                              {d.es_extra_motorizado ? " · +motorizado" : ""}
+                            </td>
+                            <td className="border-r border-slate-200 px-3 py-2 text-slate-600">
+                              {d.entalle
+                                ? `${d.talla_stock_nombre ?? "—"} → ${d.talla_vendida_nombre ?? "Sin talla"}`
+                                : d.talla_vendida_nombre ?? "Sin talla"}
+                            </td>
+                            <td className="border-r border-slate-200 px-3 py-2 text-right">
+                              <span className="text-slate-600">{d.cantidad}</span>
+                              <span className="ml-1 text-xs text-slate-400">x S/ {Number(d.precio_unitario).toFixed(2)}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold text-slate-800">
+                              S/ {Number(d.subtotal).toFixed(2)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              ) : (
+                <p className="text-sm text-slate-500">
+                  Los productos de este pedido se gestionan desde los{" "}
+                  <span className="font-semibold">viajes</span> de abajo (cada viaje lleva sus propios
+                  productos; las devoluciones aparecen en su viaje de regreso).
+                </p>
               )}
               <div className="mt-4 flex justify-between border-t border-slate-300 pt-3 text-sm">
-                <span className="text-slate-500">Total (incluye envío)</span>
+                <span className="text-slate-500">
+                  Total {!puedeEditar ? "(entregas − devoluciones)" : "(incluye envío)"}
+                </span>
                 <span className="font-bold text-slate-800">S/ {Number(pedido.monto_total).toFixed(2)}</span>
               </div>
             </div>
@@ -289,16 +346,47 @@ export default function PedidoDetallePage() {
             </div>
           </section>
 
-          <section className="overflow-hidden rounded-xl border border-slate-300 bg-white">
-            <div className="flex items-center gap-2 border-b border-slate-200 bg-purple-50 px-5 py-3">
+          <section
+            className={`overflow-hidden rounded-xl border border-slate-300 bg-white ${
+              gestionarViajes ? "md:col-span-2" : ""
+            }`}
+          >
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-purple-50 px-5 py-3">
               <span className="h-2.5 w-2.5 rounded-full bg-purple-500" />
-              <h2 className="text-sm font-semibold text-slate-800">Viajes</h2>
+              <h2 className="flex-1 text-sm font-semibold text-slate-800">Viajes</h2>
+              {gestionarViajes && (
+                <>
+                  <Button size="sm" variant="secondary" onClick={() => setShowNuevoViajeEntrega(true)}>
+                    + Nuevo viaje de entrega
+                  </Button>
+                  <Button size="sm" onClick={() => setShowViajeRegreso(true)}>
+                    + Viaje de regreso
+                  </Button>
+                </>
+              )}
             </div>
             <div className="p-5">
               {viajes.length === 0 ? (
                 <p className="text-sm text-slate-400">
                   Sin viajes {["borrador", "solicitado"].includes(pedido.estado) ? "(confirma el pedido para crear el primer viaje)" : ""}.
                 </p>
+              ) : gestionarViajes ? (
+                <div className="space-y-4">
+                  {viajes.map((v) => (
+                    <ViajeCard key={v.id} viaje={v} />
+                  ))}
+                  <div className="flex flex-wrap justify-end gap-4 rounded-lg bg-slate-50 px-4 py-3 text-sm">
+                    <span className="text-slate-500">
+                      Total entregas <span className="font-semibold text-emerald-700">S/ {viajesTotal(viajes).toFixed(2)}</span>
+                    </span>
+                    <span className="text-slate-500">
+                      Devoluciones <span className="font-semibold text-red-600">− S/ {viajesDevoluciones(viajes).toFixed(2)}</span>
+                    </span>
+                    <span className="text-slate-500">
+                      Total pedido <span className="font-bold text-slate-800">S/ {Number(pedido.monto_total).toFixed(2)}</span>
+                    </span>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-1">
                   {viajes.map((v) => (
@@ -394,6 +482,28 @@ export default function PedidoDetallePage() {
           }}
         />
       )}
+      {showNuevoViajeEntrega && (
+        <NuevoViajeEntregaModal
+          pedidoId={id}
+          pedido={pedido}
+          onClose={() => setShowNuevoViajeEntrega(false)}
+          onDone={() => {
+            setShowNuevoViajeEntrega(false);
+            cargar();
+          }}
+        />
+      )}
+      {showViajeRegreso && (
+        <ViajeRegresoModal
+          pedidoId={id}
+          detalles={detalles}
+          onClose={() => setShowViajeRegreso(false)}
+          onDone={() => {
+            setShowViajeRegreso(false);
+            cargar();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -451,6 +561,515 @@ function PagoModal({
           <option value="tarjeta_link">Tarjeta (Link)</option>
           <option value="efectivo">Efectivo</option>
         </Select>
+        <ErrorBanner message={error} />
+      </div>
+    </Modal>
+  );
+}
+
+function viajesTotal(viajes: Viaje[]): number {
+  return viajes.filter((v) => v.tipo === "entrega").reduce((a, v) => a + Number(v.total ?? 0), 0);
+}
+
+function viajesDevoluciones(viajes: Viaje[]): number {
+  return viajes.filter((v) => v.tipo === "recojo").reduce((a, v) => a + Number(v.total ?? 0), 0);
+}
+
+function ViajeCard({ viaje }: { viaje: Viaje }) {
+  const esRegreso = viaje.tipo === "recojo";
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <Link href={`/almacen/${viaje.id}`} className="text-sm font-semibold text-blue-600 hover:underline">
+          {viaje.codigo}
+        </Link>
+        <Badge color={esRegreso ? "amber" : "blue"}>{esRegreso ? "Regreso" : "Entrega"}</Badge>
+        <Badge color={ESTADO_BADGE[viaje.estado] ?? "slate"}>
+          {VIAJE_ESTADO_LABEL[viaje.estado] ?? viaje.estado}
+        </Badge>
+        {esRegreso && viaje.motivo_recojo && (
+          <Badge color={viaje.motivo_recojo === "cambio" ? "purple" : "red"}>
+            {viaje.motivo_recojo === "cambio" ? "Cambio" : "Devolución"}
+          </Badge>
+        )}
+        <span className="ml-auto text-xs text-slate-400">
+          {viaje.fecha ? new Date(viaje.fecha + "T00:00:00").toLocaleDateString("es-PE") : "Sin fecha"}
+        </span>
+      </div>
+      <div className="p-4">
+        {viaje.direccion && <p className="mb-2 text-xs text-slate-500">Dirección: {viaje.direccion}</p>}
+        <div className="space-y-1">
+          {viaje.lineas.length === 0 ? (
+            <p className="text-sm text-slate-400">Sin productos.</p>
+          ) : (
+            viaje.lineas.map((l) => (
+              <div
+                key={l.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-800">
+                    {l.producto_nombre}{" "}
+                    <span className="text-xs font-normal text-slate-400">({l.imei})</span>
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {l.entalle
+                      ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                      : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}{" "}
+                    · x{l.cantidad}
+                    {l.es_extra_motorizado ? " · +motorizado" : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {l.devolucion && (
+                    <Badge color={l.estado === "devuelto" ? "green" : "red"}>
+                      {l.estado === "devuelto" ? "Devuelto" : "Pendiente de devolución"}
+                    </Badge>
+                  )}
+                  <span className="text-sm font-semibold text-slate-800">S/ {Number(l.subtotal).toFixed(2)}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2 text-sm">
+          <span className="text-xs text-slate-400">
+            {esRegreso
+              ? "Costo a devolver"
+              : viaje.costo_envio > 0
+                ? "Total (incluye envío)"
+                : "Total"}
+          </span>
+          <span className="font-bold text-slate-800">
+            {esRegreso ? "− " : ""}S/ {Number(viaje.total).toFixed(2)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type LineaViajeNueva = {
+  key: string;
+  imei: string;
+  nombre: string;
+  talla_stock: string | null;
+  talla_stock_nombre: string | null;
+  talla_vendida: string | null;
+  talla_vendida_nombre: string | null;
+  producto_id: string;
+  cantidad: number;
+  precio: number;
+  entalle: boolean;
+  genero: string;
+  es_extra_motorizado: boolean;
+};
+
+// Nuevo viaje de ENTREGA: agrega productos a un pedido ya entregado, con su
+// propia fecha, dirección y costo de envío.
+function NuevoViajeEntregaModal({
+  pedidoId,
+  pedido,
+  onClose,
+  onDone,
+}: {
+  pedidoId: string;
+  pedido: Pedido;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [fecha, setFecha] = useState(
+    pedido.fecha_entrega ?? new Date().toISOString().slice(0, 10)
+  );
+  const [direccion, setDireccion] = useState(pedido.direccion_entrega ?? "");
+  const [costoEnvio, setCostoEnvio] = useState("");
+  const [productos, setProductos] = useState<{ id: string; imei: string; nombre: string }[]>([]);
+  const [tallasPorProducto, setTallasPorProducto] = useState<
+    Record<string, { id: string; nombre: string; cantidad_ventas: number }[]>
+  >({});
+  const [productoId, setProductoId] = useState("");
+  const [tallaStock, setTallaStock] = useState("");
+  const [entalle, setEntalle] = useState(false);
+  const [tallaVendida, setTallaVendida] = useState("");
+  const [cantidad, setCantidad] = useState("1");
+  const [precio, setPrecio] = useState("");
+  const [genero, setGenero] = useState("dama");
+  const [lineas, setLineas] = useState<LineaViajeNueva[]>([]);
+  const [nuevoN, setNuevoN] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api<{ productos: { id: string; imei: string; nombre: string }[] }>("/api/productos").then(
+      ({ data }) => setProductos(data?.productos ?? [])
+    );
+  }, []);
+
+  function cargarTallas(pid: string) {
+    api<{ tallas: { id: string; nombre: string; cantidad_ventas: number }[] }>(
+      "/api/tallas?producto_id=" + pid
+    ).then(({ data }) => {
+      const ts = data?.tallas ?? [];
+      setTallasPorProducto((prev) => ({ ...prev, [pid]: ts }));
+    });
+  }
+
+  useEffect(() => {
+    if (productoId) {
+      setTallaStock("");
+      setEntalle(false);
+      setTallaVendida("");
+      cargarTallas(productoId);
+    }
+  }, [productoId]);
+
+  const dispLocal = (pid: string, tid: string) => {
+    const t = (tallasPorProducto[pid] ?? []).find((x) => x.id === tid);
+    const base = t?.cantidad_ventas ?? 0;
+    const yaSumado = lineas
+      .filter((l) => l.producto_id === pid && (l.talla_stock ?? l.talla_vendida) === tid)
+      .reduce((a, l) => a + l.cantidad, 0);
+    return base - yaSumado;
+  };
+
+  function agregar() {
+    setError(null);
+    if (!productoId) return;
+    const p = productos.find((x) => x.id === productoId);
+    const cant = Number(cantidad);
+    if (!p || !cant || cant <= 0) {
+      setError("Indica una cantidad válida");
+      return;
+    }
+    const stockId = tallaStock || null;
+    const vendidaId = entalle ? tallaVendida || tallaStock : tallaStock;
+    if (stockId && dispLocal(productoId, stockId) < cant) {
+      setError(`Stock insuficiente: solo hay ${dispLocal(productoId, stockId)} disponible en esa talla`);
+      return;
+    }
+    const tallas = tallasPorProducto[productoId] ?? [];
+    const stockSel = tallas.find((t) => t.id === stockId);
+    const vendidaSel = tallas.find((t) => t.id === vendidaId);
+    setNuevoN((n) => n + 1);
+    setLineas((prev) => [
+      ...prev,
+      {
+        key: `nuevo-${nuevoN}`,
+        imei: p.imei,
+        nombre: p.nombre,
+        talla_stock: stockId,
+        talla_stock_nombre: stockSel?.nombre ?? null,
+        talla_vendida: vendidaId || null,
+        talla_vendida_nombre: vendidaSel?.nombre ?? null,
+        producto_id: p.id,
+        cantidad: cant,
+        precio: Number(precio || 0),
+        entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
+        genero,
+        es_extra_motorizado: false,
+      },
+    ]);
+    setProductoId("");
+    setTallaStock("");
+    setEntalle(false);
+    setTallaVendida("");
+    setCantidad("1");
+    setPrecio("");
+  }
+
+  function quitar(key: string) {
+    setLineas((prev) => prev.filter((l) => l.key !== key));
+  }
+
+  async function guardar() {
+    setError(null);
+    if (lineas.length === 0) {
+      setError("Agrega al menos un producto al viaje");
+      return;
+    }
+    if (!fecha) {
+      setError("Indica la fecha del viaje");
+      return;
+    }
+    setLoading(true);
+    const { error: e } = await api("/api/viajes", {
+      method: "POST",
+      body: JSON.stringify({
+        pedido_id: pedidoId,
+        tipo: "entrega",
+        fecha,
+        direccion: direccion || null,
+        costo_envio: Number(costoEnvio || 0),
+        lineas: lineas.map((l) => ({
+          producto_id: l.producto_id,
+          talla_stock: l.talla_stock,
+          talla_vendida: l.entalle ? l.talla_vendida : l.talla_stock,
+          entalle: l.entalle,
+          cantidad: l.cantidad,
+          precio_unitario: l.precio,
+          genero: l.genero,
+          es_extra_motorizado: l.es_extra_motorizado,
+        })),
+      }),
+    });
+    setLoading(false);
+    if (e) setError(e);
+    else onDone();
+  }
+
+  const tallas = tallasPorProducto[productoId] ?? [];
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Nuevo viaje de entrega"
+      xwide
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button onClick={guardar} disabled={loading}>
+            {loading ? "Guardando..." : "Crear viaje"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Input label="Fecha del viaje" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          <div className="md:col-span-2">
+            <Input label="Dirección" value={direccion} onChange={(e) => setDireccion(e.target.value)} />
+          </div>
+          <Input label="Costo de envío (S/)" type="number" step="0.01" value={costoEnvio} onChange={(e) => setCostoEnvio(e.target.value)} />
+        </div>
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-700">
+            Agregar producto
+          </h3>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+            <Select label="Producto" value={productoId} onChange={(e) => setProductoId(e.target.value)} className="md:col-span-12">
+              <option value="">Selecciona...</option>
+              {productos.map((p) => (
+                <option key={p.id} value={p.id}>{p.nombre} ({p.imei})</option>
+              ))}
+            </Select>
+            <Select label="Talla" value={tallaStock} onChange={(e) => { setTallaStock(e.target.value); setTallaVendida(e.target.value); }} className="md:col-span-3">
+              <option value="">Sin talla</option>
+              {tallas.filter((t) => dispLocal(productoId, t.id) > 0).length > 0 ? (
+                tallas
+                  .filter((t) => dispLocal(productoId, t.id) > 0)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nombre} ({dispLocal(productoId, t.id)} disp.)
+                    </option>
+                  ))
+              ) : (
+                <option value="" disabled>Sin stock</option>
+              )}
+            </Select>
+            <div className="md:col-span-2">
+              <label className="mb-1 flex h-5 cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={entalle}
+                  onChange={(e) => {
+                    setEntalle(e.target.checked);
+                    if (e.target.checked && !tallaVendida) setTallaVendida(tallaStock);
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                Entallar a
+              </label>
+              {entalle && (
+                <Select value={tallaVendida} onChange={(e) => setTallaVendida(e.target.value)}>
+                  <option value="">Sin talla</option>
+                  {tallas.map((t) => (
+                    <option key={t.id} value={t.id}>{t.nombre}</option>
+                  ))}
+                </Select>
+              )}
+            </div>
+            <Input label="Cantidad" type="number" min={1} value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="md:col-span-2" />
+            <Input label="Precio (S/)" type="number" step="0.01" value={precio} onChange={(e) => setPrecio(e.target.value)} className="md:col-span-3" />
+            <Select label="Género" value={genero} onChange={(e) => setGenero(e.target.value)} className="md:col-span-2">
+              <option value="dama">Dama</option>
+              <option value="caballero">Caballero</option>
+            </Select>
+          </div>
+          <Button onClick={agregar} disabled={!productoId} className="mt-3 w-full">
+            <span className="text-2xl leading-none">+</span> Añadir este producto
+          </Button>
+        </div>
+
+        <div className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Productos del viaje{lineas.length > 0 ? ` (${lineas.length})` : ""}
+          </h3>
+          {lineas.length === 0 && <p className="text-sm text-slate-400">Sin productos.</p>}
+          <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
+            {lineas.map((l) => (
+              <div key={l.key} className="p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-base font-semibold text-slate-800">
+                    {l.nombre} <span className="text-sm font-normal text-slate-400">({l.imei})</span>
+                  </p>
+                  <Button size="sm" variant="danger" onClick={() => quitar(l.key)}>Quitar</Button>
+                </div>
+                <p className="mt-1 text-sm text-slate-500">
+                  {l.entalle
+                    ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                    : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}{" "}
+                  · x{l.cantidad} · S/ {(l.cantidad * l.precio).toFixed(2)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <ErrorBanner message={error} />
+      </div>
+    </Modal>
+  );
+}
+
+type LineaRegreso = { detalle_id: string; cantidad: string; precio: string };
+
+// Viaje de REGRESO (recojo): quita productos del pedido entregado. Se elige
+// cuánto se devuelve y cuánto se descuenta por prenda (0 permitido).
+function ViajeRegresoModal({
+  pedidoId,
+  detalles,
+  onClose,
+  onDone,
+}: {
+  pedidoId: string;
+  detalles: Detalle[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [motivo, setMotivo] = useState("devolucion");
+  const [lineas, setLineas] = useState<LineaRegreso[]>(() =>
+    detalles.map((d) => ({
+      detalle_id: d.id,
+      cantidad: "0",
+      precio: String(d.precio_unitario ?? 0),
+    }))
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  function actualizar(detalleId: string, patch: Partial<LineaRegreso>) {
+    setLineas((prev) => prev.map((l) => (l.detalle_id === detalleId ? { ...l, ...patch } : l)));
+  }
+
+  async function guardar() {
+    setError(null);
+    const elegidas = lineas
+      .filter((l) => Number(l.cantidad) > 0)
+      .map((l) => ({ ...l, cantidad: Number(l.cantidad), precio: Number(l.precio) }));
+    if (elegidas.length === 0) {
+      setError("Indica al menos un producto y su cantidad a devolver");
+      return;
+    }
+    for (const l of elegidas) {
+      const d = detalles.find((x) => x.id === l.detalle_id)!;
+      if (l.cantidad > Number(d.cantidad)) {
+        setError(`Solo hay ${d.cantidad} de ${d.producto_nombre} para devolver`);
+        return;
+      }
+      if (l.precio < 0) {
+        setError("El costo a devolver no puede ser negativo");
+        return;
+      }
+    }
+    setLoading(true);
+    const { error: e } = await api("/api/viajes", {
+      method: "POST",
+      body: JSON.stringify({
+        pedido_id: pedidoId,
+        tipo: "recojo",
+        motivo,
+        lineas: elegidas.map((l) => ({
+          detalle_id: l.detalle_id,
+          cantidad: l.cantidad,
+          precio_devolucion: l.precio,
+        })),
+      }),
+    });
+    setLoading(false);
+    if (e) setError(e);
+    else onDone();
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Viaje de regreso (recojo)"
+      xwide
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button onClick={guardar} disabled={loading}>
+            {loading ? "Guardando..." : "Crear viaje de regreso"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Select label="Motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+            <option value="devolucion">Devolución</option>
+            <option value="cambio">Cambio</option>
+          </Select>
+        </div>
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Al crear el regreso, los productos salen del viaje de entrega y quedan pendientes de
+          devolución en este viaje. La unidad devuelta vuelve al almacén con su talla actual.
+        </p>
+        <div className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Productos a devolver
+          </h3>
+          {detalles.length === 0 && <p className="text-sm text-slate-400">Sin productos devolubles.</p>}
+          <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
+            {detalles.map((d) => {
+              const l = lineas.find((x) => x.detalle_id === d.id)!;
+              return (
+                <div key={d.id} className="p-4">
+                  <p className="text-base font-semibold text-slate-800">
+                    {d.producto_nombre}{" "}
+                    <span className="text-sm font-normal text-slate-400">({d.imei})</span>
+                  </p>
+                  <p className="mb-3 mt-0.5 text-sm text-slate-500">
+                    {d.entalle
+                      ? `${d.talla_stock_nombre ?? "—"} → ${d.talla_vendida_nombre ?? "Sin talla"}`
+                      : d.talla_vendida_nombre ?? "Sin talla"}{" "}
+                    · entregado x{d.cantidad} · S/ {Number(d.precio_unitario).toFixed(2)} c/u
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <Input
+                      label="Cantidad a devolver"
+                      type="number"
+                      min={0}
+                      max={d.cantidad}
+                      value={l.cantidad}
+                      onChange={(e) => actualizar(d.id, { cantidad: e.target.value })}
+                    />
+                    <Input
+                      label="Costo a devolver (S/) por prenda"
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={l.precio}
+                      onChange={(e) => actualizar(d.id, { precio: e.target.value })}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
         <ErrorBanner message={error} />
       </div>
     </Modal>

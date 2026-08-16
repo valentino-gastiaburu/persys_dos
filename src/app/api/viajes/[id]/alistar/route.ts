@@ -21,13 +21,17 @@ export async function POST(
 
   const { data: viaje } = await supabase
     .from("viajes")
-    .select("id, pedido_id, estado")
+    .select("id, pedido_id, estado, tipo")
     .eq("id", id)
     .single();
   if (!viaje) return Response.json({ error: "Viaje no encontrado" }, { status: 404 });
   if (viaje.estado === "enviado" || viaje.estado === "terminado") {
     return Response.json({ error: "El viaje ya fue enviado o terminado" }, { status: 400 });
   }
+
+  // En una entrega se alistan unidades de almacén; en un regreso (recojo) se
+  // recogen las unidades que ya fueron entregadas al cliente.
+  const esRecojo = viaje.tipo === "recojo";
 
   const { data: unico } = await supabase
     .from("productos_unicos")
@@ -37,8 +41,12 @@ export async function POST(
   if (!unico) {
     return Response.json({ error: "No existe un producto con ese QR" }, { status: 404 });
   }
-  if (unico.estado !== "en_almacen") {
-    return Response.json({ error: "Ese producto no está disponible en almacén" }, { status: 400 });
+  const estadoRequerido = esRecojo ? "entregado" : "en_almacen";
+  if (unico.estado !== estadoRequerido) {
+    return Response.json(
+      { error: esRecojo ? "Ese producto no está entregado al cliente" : "Ese producto no está disponible en almacén" },
+      { status: 400 }
+    );
   }
 
   // ¿Ya está alistado en este viaje?
@@ -61,7 +69,7 @@ export async function POST(
       tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
     `)
     .eq("viaje_id", id)
-    .eq("estado", "activo")
+    .not("estado", "eq", "oculto")
     .eq("producto_id", unico.producto_id)
     .order("creado_el");
 
@@ -82,13 +90,17 @@ export async function POST(
     contador[a.detalle_pedido_id] = (contador[a.detalle_pedido_id] ?? 0) + 1;
   }
 
-  // Elegir detalle: la unidad debe tener la talla STOCK (la que hay en almacén);
-  // si el detalle tiene entalle se modifica a la talla vendida (destino).
+  // Elegir detalle: la unidad debe tener la talla que corresponde. En entregas
+  // se toma la talla STOCK (la que hay en almacén); en regresos la talla que
+  // realmente tiene la unidad entregada (talla vendida). Si el detalle tiene
+  // entalle se modifica a la talla vendida (destino).
   let detalleElegido: any = null;
   for (const d of detalles) {
     const ya = contador[d.id] ?? 0;
     if (ya >= Number(d.cantidad)) continue;
-    const tallaOrigen = d.talla_stock ?? d.talla_vendida;
+    const tallaOrigen = esRecojo
+      ? d.talla_vendida ?? d.talla_stock
+      : d.talla_stock ?? d.talla_vendida;
     if (unico.talla_id !== tallaOrigen) continue;
     detalleElegido = d;
     break;

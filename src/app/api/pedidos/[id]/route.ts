@@ -1,7 +1,12 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { getDetallesActivos, calcularTotal } from "@/lib/pedidos";
+import {
+  getDetallesActivos,
+  calcularTotal,
+  recalcularTotalViaje,
+  calcularTotalPedido,
+} from "@/lib/pedidos";
 
 export async function GET(
   request: NextRequest,
@@ -40,17 +45,59 @@ export async function GET(
     .order("fecha");
 
   const totalPagado = (pagos ?? []).reduce((acc, p) => acc + Number(p.monto), 0);
-  const { data: viajes } = await supabase
+  const { data: viajesData } = await supabase
     .from("viajes")
     .select("*")
     .eq("pedido_id", id)
     .order("creado_el");
 
+  // Líneas de cada viaje (incluye las de devolución; excluye las ocultas).
+  const { data: detallesViaje } = await supabase
+    .from("detalles_pedido")
+    .select(`
+      id, viaje_id, producto_id, talla_stock, talla_vendida, cantidad, precio_unitario,
+      subtotal, genero, entalle, es_extra_motorizado, estado,
+      productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre),
+      tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
+    `)
+    .eq("pedido_id", id)
+    .not("estado", "eq", "oculto")
+    .order("creado_el");
+
+  const lineasPorViaje: Record<string, any[]> = {};
+  for (const dd of (detallesViaje ?? []) as any[]) {
+    const d = dd;
+    lineasPorViaje[d.viaje_id] = lineasPorViaje[d.viaje_id] ?? [];
+    lineasPorViaje[d.viaje_id].push({
+      id: d.id,
+      producto_id: d.producto_id,
+      imei: d.productos?.imei,
+      producto_nombre: d.productos?.nombre,
+      talla_stock: d.talla_stock,
+      talla_stock_nombre: d.tallas_stock?.nombre ?? null,
+      talla_vendida: d.talla_vendida,
+      talla_vendida_nombre: d.tallas?.nombre ?? null,
+      cantidad: Number(d.cantidad),
+      precio_unitario: Number(d.precio_unitario),
+      subtotal: Number(d.subtotal),
+      genero: d.genero,
+      entalle: d.entalle,
+      es_extra_motorizado: d.es_extra_motorizado,
+      estado: d.estado,
+      devolucion: d.estado === "devuelto" || d.estado === "pendiente_devolucion",
+    });
+  }
+
+  const viajes = (viajesData ?? []).map((v: any) => ({
+    ...v,
+    lineas: lineasPorViaje[v.id] ?? [],
+  }));
+
   return Response.json({
     pedido,
     detalles,
     pagos: pagos ?? [],
-    viajes: viajes ?? [],
+    viajes,
     total_pagado: totalPagado,
     deuda: Number(pedido.monto_total) - totalPagado,
   });
@@ -101,17 +148,36 @@ export async function PATCH(
   if (body.regalo !== undefined) updates.regalo = Boolean(body.regalo);
   if (body.monto_total !== undefined) updates.monto_total = Number(body.monto_total);
 
-  // Si cambia el costo de envío, recalcular el monto_total (suma de subtotales + envío)
+  // Si cambia el costo de envío, recalcular el monto_total. El total vive en el
+  // viaje de entrega original (pedido = colección de viajes): se actualiza su
+  // costo_envio y total, y monto_total = Σ entregas − Σ regresos.
   if (updates.costo_envio !== undefined && body.monto_total === undefined) {
-    const { data: detalles } = await supabase
-      .from("detalles_pedido")
-      .select("subtotal")
+    const { data: viajes } = await supabase
+      .from("viajes")
+      .select("id")
       .eq("pedido_id", id)
-      .eq("estado", "activo");
-    updates.monto_total = calcularTotal(
-      (detalles ?? []).map((d: any) => ({ subtotal: Number(d.subtotal) })),
-      updates.costo_envio
-    );
+      .eq("tipo", "entrega")
+      .order("creado_el")
+      .limit(1);
+    const primerEntrega = viajes?.[0];
+    if (primerEntrega) {
+      await supabase
+        .from("viajes")
+        .update({ costo_envio: updates.costo_envio })
+        .eq("id", primerEntrega.id);
+      await recalcularTotalViaje(primerEntrega.id, "entrega", updates.costo_envio);
+      updates.monto_total = await calcularTotalPedido(id);
+    } else {
+      const { data: detalles } = await supabase
+        .from("detalles_pedido")
+        .select("subtotal")
+        .eq("pedido_id", id)
+        .eq("estado", "activo");
+      updates.monto_total = calcularTotal(
+        (detalles ?? []).map((d: any) => ({ subtotal: Number(d.subtotal) })),
+        updates.costo_envio
+      );
+    }
   }
 
   if (Object.keys(updates).length === 0) {

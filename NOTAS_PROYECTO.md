@@ -1,7 +1,7 @@
 # Persys_dos — Contexto del proyecto
 
 > Bitácora resumida: decisiones del usuario, respuestas a preguntas y estado actual.
-> Última actualización: 14/ago/2026.
+> Última actualización: 16/ago/2026.
 
 ## Qué es Persys_dos
 
@@ -111,6 +111,28 @@ configuración.
     - Alistar: la unidad escaneada debe tener `talla_id == talla_stock`; luego se modifica a
       `talla_vendida` si difieren (`talla_original` guarda la previa, evento `entallado`).
     - Muestra: pedido y viaje muestran `talla_stock → talla_vendida` cuando hay entalle.
+17. **El pedido es una colección de viajes** (16/ago/2026): cuando está **`entregado`** (o
+    `esperando_*`/`cerrado`) la **única forma de modificarlo es con viajes**, no con "Editar
+    productos". Creadores: vendedora, agendadora, controller, admin (API `POST /api/viajes`).
+    - **Viaje de entrega extra** (agrega productos): fecha, dirección (default la del pedido) y
+      costo de envío propios; valida stock como pedido nuevo. Prohibido en borrador/solicitado/
+      cancelado/devuelto (el primer viaje lo crea "Confirmar pedido"). Su costo de envío **sí
+      suma** al total.
+    - **Viaje de regreso / recojo** (quita productos, motivo `devolucion`/`cambio`): solo en
+      pedidos entregados. Al crearlo, cada línea original **reduce su cantidad** (si se devuelve
+      toda la línea pasa a `oculto`) y nace una línea espejo `pendiente_devolucion` con
+      `devolucion_de` → original. Devolución **parcial** soportada. Por prenda se edita el
+      **costo a devolver** (default precio original, **0 permitido**). Al terminar el recojo las
+      líneas pasan a `devuelto` y las unidades vuelven a almacén **con su talla actual** (no se
+      restaura la talla original). El `costo_envio` del regreso es **informativo**, no se descuenta.
+    - **Totales:** cada viaje tiene su propio `total` (Σ subtotales + costo_envio en entregas).
+      `monto_total` del pedido = Σ entregas **−** Σ regresos (`calcularTotalPedido`).
+    - **Estado del pedido:** rank mínimo entre viajes de entrega (`programado`→confirmado,
+      `alistado`→alistado, `enviado`→enviado, todos terminados→entregado); recojo pendiente →
+      `esperando_devolucion`/`esperando_cambio`. Un entregado con viaje extra vuelve a confirmado.
+    - Migración **`supabase/08_viajes_extras.sql`** (a correr por el usuario): añade
+      `viajes.costo_envio/total/direccion`, `detalles_pedido.devolucion_de` y los estados de
+      detalle `pendiente_devolucion`/`devuelto`, con backfill del `total` del viaje original.
 
 ## Preguntas respondidas en el camino (resumen técnico)
 
@@ -150,9 +172,13 @@ configuración.
 6. `supabase/07_talla_stock_vendida.sql` → renombra en `detalles_pedido`: `talla_inicial` →
    `talla_stock` y `talla_id` → `talla_vendida` (+ constraints y backfill). Para la **BD
    existente**; en una BD nueva ya vienen con ese nombre en `02_schema.sql`.
+7. `supabase/08_viajes_extras.sql` → pedido = colección de viajes: agrega a `viajes`
+   `costo_envio`/`total`/`direccion`, a `detalles_pedido` `devolucion_de`, y los estados
+   `pendiente_devolucion`/`devuelto` al enum `detalle_estado` (+ backfill del total del
+   viaje de entrega original). Aditiva/idempotente.
 
-Para una BD nueva: **01 → 02 → 03 → 04 → 05** (07 no hace falta). Para la BD existente: basta
-correr **03, 04, 05 y 07** (aditivas/idempotentes; no tocan datos).
+Para una BD nueva: **01 → 02 → 03 → 04 → 05 → 08** (07 no hace falta). Para la BD existente: basta
+correr **03, 04, 05, 07 y 08** (aditivas/idempotentes; no tocan datos).
 (La migración `06_stock_ventas.sql` se creó y luego **se eliminó**: la regla de stock ventas
 es 100% JS, `getStockVentasPorTalla`, sin vista ni función SQL.)
 
@@ -185,6 +211,7 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - `viaje_tipo`: entrega, recojo · `viaje_estado`: programado, alistado, enviado, terminado
 - `viaje_motivo_recojo`: devolucion, cambio
 - `tipo_talla`: A, B, C, AB, AC, BC, ABC, sin_talla (A=XS..XXL, B=26..36, C=2..16)
+- `detalle_estado`: activo, oculto, **pendiente_devolucion, devuelto** (añadidos por `08`)
 
 ## Flujo de estados del pedido
 
@@ -197,9 +224,12 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - Transiciones **manuales** (tabla de pedidos y detalle, vía `POST /api/pedidos/[id]/estado`):
   - `solicitado` → `confirmado` (botón Confirmar, usa `/confirmar`), `cancelado`
   - `confirmado` → `solicitado` (Volver a Solicitar), `cancelado`
-- Transición **automática**: `confirmado` → `alistado` cuando su viaje de entrega pasa a
-  `alistado` (`syncEstadoPedidoPorViajes` en `lib/pedidos.ts`). Luego `enviado`/`entregado`
-  siguiendo al viaje.
+- Transición **automática** (`syncEstadoPedidoPorViajes` en `lib/pedidos.ts`): **rank mínimo
+  entre viajes de entrega** — el pedido sigue al viaje MENOS avanzado (`programado`→`confirmado`,
+  `alistado`→`alistado`, `enviado`→`enviado`, todos `terminado`→`entregado`). Con **recojo
+  pendiente** → `esperando_devolucion`/`esperando_cambio` (manda por encima de todo). Sin viajes
+  → `confirmado`. Así un pedido entregado que recibe un viaje de entrega extra vuelve a
+  `confirmado` hasta que todos sus viajes avancen.
 
 ## GitHub
 
@@ -216,6 +246,10 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
   REST (`select=talla_stock,talla_vendida,entalle`).
 - El smoke test dejó **datos de prueba** en la BD (productos/clientes/pedidos con "SMOKE").
   Preguntar al usuario si limpiarlos.
+- **`supabase/08_viajes_extras.sql` está pendiente de correr** por el usuario en el SQL Editor
+  (implementación lista en código). Hasta que se corra, `viajes.total/costo_envio/direccion`,
+  `detalles_pedido.devolucion_de` y los estados `pendiente_devolucion`/`devuelto` no existen
+  en la BD y la feature de viajes extras no funciona.
 - La ruta `detalles/route.ts` devuelve el mensaje de Postgres en errores (útil para debug;
   se puede quitar si prefiere mensajes genéricos).
 - Evaluar bucket de Supabase Storage para `productos.foto_url` (no implementado).

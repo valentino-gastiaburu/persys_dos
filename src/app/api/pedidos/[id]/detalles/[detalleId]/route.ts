@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { calcularTotal } from "@/lib/pedidos";
+import { sincronizarTotalesPedido } from "@/lib/pedidos";
 import { getStockVentasPorTalla } from "@/lib/productos";
 
 // PATCH /api/pedidos/[id]/detalles/[detalleId] — editar cantidad/precio/entalle
@@ -91,21 +91,8 @@ export async function PATCH(
     return Response.json({ error: "No se pudo actualizar el detalle" }, { status: 500 });
   }
 
-  // Recalcular total
-  const detalles = await supabase
-    .from("detalles_pedido")
-    .select("subtotal")
-    .eq("pedido_id", id)
-    .eq("estado", "activo");
-  const { data: pedidoActual } = await supabase
-    .from("pedidos")
-    .select("costo_envio")
-    .eq("id", id)
-    .single();
-  const montoTotal = calcularTotal(
-    (detalles.data ?? []).map((d) => ({ subtotal: Number(d.subtotal) })),
-    Number(pedidoActual?.costo_envio ?? 0)
-  );
+  // Recalcular totales (del viaje y del pedido)
+  const montoTotal = await sincronizarTotalesPedido(id);
   await supabase.from("pedidos").update({ monto_total: montoTotal }).eq("id", id);
 
   return Response.json({ detalle: actualizado, monto_total: montoTotal });
@@ -142,20 +129,7 @@ export async function DELETE(
     .eq("id", detalleId);
   if (err) return Response.json({ error: "No se pudo quitar el detalle" }, { status: 500 });
 
-  const detalles = await supabase
-    .from("detalles_pedido")
-    .select("subtotal")
-    .eq("pedido_id", id)
-    .eq("estado", "activo");
-  const { data: pedidoActual } = await supabase
-    .from("pedidos")
-    .select("costo_envio")
-    .eq("id", id)
-    .single();
-  const montoTotal = calcularTotal(
-    (detalles.data ?? []).map((d) => ({ subtotal: Number(d.subtotal) })),
-    Number(pedidoActual?.costo_envio ?? 0)
-  );
+  const montoTotal = await sincronizarTotalesPedido(id);
   await supabase.from("pedidos").update({ monto_total: montoTotal }).eq("id", id);
 
   return Response.json({ ok: true, monto_total: montoTotal });

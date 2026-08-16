@@ -69,8 +69,18 @@ export async function registrarHistorialPedido(params: {
 }
 
 // Recalcula el estado del pedido a partir de sus viajes.
-// Con un solo viaje: pedido sigue al viaje. Con varios: entregado cuando todos terminan.
-// Si hay recojo pendiente: esperando_devolucion / esperando_cambio.
+// Regla: recojo pendiente -> esperando_devolucion/cambio; si no, el pedido sigue
+// al viaje de entrega MENOS avanzado (rank mínimo): programado->confirmado,
+// alistado->alistado, enviado->enviado, todos terminados->entregado.
+// Así un pedido entregado que recibe un nuevo viaje de entrega vuelve a
+// confirmado hasta que TODOS sus viajes avancen.
+const VIAJE_RANK: Record<string, number> = {
+  programado: 0,
+  alistado: 1,
+  enviado: 2,
+  terminado: 3,
+};
+
 export async function syncEstadoPedidoPorViajes(pedidoId: string): Promise<string> {
   const supabase = getSupabase();
   const { data: viajes } = await supabase
@@ -80,29 +90,97 @@ export async function syncEstadoPedidoPorViajes(pedidoId: string): Promise<strin
 
   if (!viajes || viajes.length === 0) return "confirmado";
 
-  const tieneEntrega = viajes.some((v) => v.tipo === "entrega");
-  const tieneRecojo = viajes.some((v) => v.tipo === "recojo");
-  const recojoPendiente = viajes.some((v) => v.tipo === "recojo" && v.estado !== "terminado");
-  const entregasSinTerminar = viajes.some((v) => v.tipo === "entrega" && v.estado !== "terminado");
-
-  if (tieneRecojo && recojoPendiente) {
-    const motivo = viajes.find((v) => v.tipo === "recojo" && v.estado !== "terminado")?.motivo_recojo;
-    return motivo === "cambio" ? "esperando_cambio" : "esperando_devolucion";
+  const recojoPendiente = viajes.find((v) => v.tipo === "recojo" && v.estado !== "terminado");
+  if (recojoPendiente) {
+    return recojoPendiente.motivo_recojo === "cambio" ? "esperando_cambio" : "esperando_devolucion";
   }
 
-  if (tieneEntrega && entregasSinTerminar) {
-    // seguimos el estado del viaje de entrega en curso
-    const entrega = viajes.filter((v) => v.tipo === "entrega").sort(
-      (a, b) => (a.estado === b.estado ? 0 : a.estado === "alistado" ? -1 : 1)
-    )[0];
-    if (entrega?.estado === "alistado") return "alistado";
-    if (entrega?.estado === "enviado") return "enviado";
-    return "confirmado";
-  }
+  const entregas = viajes.filter((v) => v.tipo === "entrega");
+  if (entregas.length === 0) return "confirmado";
+  if (entregas.every((v) => v.estado === "terminado")) return "entregado";
 
-  if (tieneEntrega && !entregasSinTerminar) return "entregado";
-
+  const min = Math.min(...entregas.map((v) => VIAJE_RANK[v.estado] ?? 0));
+  if (min >= 2) return "enviado";
+  if (min >= 1) return "alistado";
   return "confirmado";
+}
+
+// Total del pedido = Σ totales de viajes de entrega − Σ totales de viajes de
+// regreso (devoluciones). El costo de envío de un regreso es informativo y no
+// se descuenta.
+export async function calcularTotalPedido(pedidoId: string): Promise<number> {
+  const supabase = getSupabase();
+  const { data: viajes } = await supabase
+    .from("viajes")
+    .select("tipo, total")
+    .eq("pedido_id", pedidoId);
+  let total = 0;
+  for (const v of viajes ?? []) {
+    const t = Number(v.total ?? 0);
+    total += v.tipo === "recojo" ? -t : t;
+  }
+  return total;
+}
+
+// Total de un viaje = suma de subtotales de sus líneas (no ocultas). En las
+// entregas se suma además el costo de envío del viaje.
+export async function recalcularTotalViaje(
+  viajeId: string,
+  tipo: string,
+  costoEnvio: number
+): Promise<number> {
+  const supabase = getSupabase();
+  const { data: detalles } = await supabase
+    .from("detalles_pedido")
+    .select("subtotal")
+    .eq("viaje_id", viajeId)
+    .not("estado", "eq", "oculto");
+  const suma = (detalles ?? []).reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
+  const total = suma + (tipo === "entrega" ? Number(costoEnvio || 0) : 0);
+  await supabase.from("viajes").update({ total }).eq("id", viajeId);
+  return total;
+}
+
+// Recalcula el monto_total de un pedido. Si ya tiene viaje(s), el total vive en
+// los viajes (Σ entregas − Σ regresos); si no (borrador/solicitado sin viaje),
+// usa la fórmula antigua: Σ subtotales activos + costo_envio.
+export async function recalcularMontoPedido(pedidoId: string): Promise<number> {
+  const supabase = getSupabase();
+  const { data: viajes } = await supabase
+    .from("viajes")
+    .select("id")
+    .eq("pedido_id", pedidoId)
+    .limit(1);
+  if ((viajes?.length ?? 0) > 0) return calcularTotalPedido(pedidoId);
+  const { data: detalles } = await supabase
+    .from("detalles_pedido")
+    .select("subtotal")
+    .eq("pedido_id", pedidoId)
+    .eq("estado", "activo");
+  const { data: pedido } = await supabase
+    .from("pedidos")
+    .select("costo_envio")
+    .eq("id", pedidoId)
+    .single();
+  return calcularTotal(
+    (detalles ?? []).map((d: any) => ({ subtotal: Number(d.subtotal) })),
+    Number(pedido?.costo_envio ?? 0)
+  );
+}
+
+// Tras agregar/editar/quitar líneas de un pedido, recalcula el total de cada
+// viaje de entrega y el monto_total del pedido.
+export async function sincronizarTotalesPedido(pedidoId: string): Promise<number> {
+  const supabase = getSupabase();
+  const { data: viajes } = await supabase
+    .from("viajes")
+    .select("id, costo_envio")
+    .eq("pedido_id", pedidoId)
+    .eq("tipo", "entrega");
+  for (const v of viajes ?? []) {
+    await recalcularTotalViaje(v.id, "entrega", Number(v.costo_envio ?? 0));
+  }
+  return recalcularMontoPedido(pedidoId);
 }
 
 export async function getDetallesActivos(pedidoId: string) {
@@ -172,6 +250,9 @@ export async function confirmarPedido(
       tipo: "entrega",
       estado: "programado",
       fecha: pedido.fecha_entrega,
+      direccion: pedido.direccion_entrega,
+      costo_envio: Number(pedido.costo_envio ?? 0),
+      total: montoTotal,
       creado_por: userId,
     })
     .select()
