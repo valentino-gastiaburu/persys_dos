@@ -29,8 +29,9 @@ export async function GET(
   const { data: detalles } = await supabase
     .from("detalles_pedido")
     .select(`
-      id, producto_id, talla_id, cantidad, es_extra_motorizado, entalle,
-      productos(imei, nombre), tallas!detalles_pedido_talla_id_fkey(nombre)
+      id, producto_id, talla_stock, talla_vendida, cantidad, es_extra_motorizado, entalle,
+      productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre),
+      tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
     `)
     .eq("viaje_id", id)
     .eq("estado", "activo")
@@ -61,7 +62,11 @@ export async function GET(
       imei: d.productos?.imei,
       nombre: d.productos?.nombre,
       talla: d.tallas?.nombre ?? null,
-      talla_id: d.talla_id,
+      talla_id: d.talla_vendida,
+      talla_stock: d.talla_stock ?? null,
+      talla_stock_nombre: d.tallas_stock?.nombre ?? null,
+      talla_vendida: d.talla_vendida ?? null,
+      talla_vendida_nombre: d.tallas?.nombre ?? null,
       cantidad: Number(d.cantidad),
       es_extra_motorizado: d.es_extra_motorizado,
       entalle: d.entalle,

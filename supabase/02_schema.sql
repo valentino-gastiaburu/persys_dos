@@ -214,9 +214,9 @@ create table detalles_pedido (
   id                 uuid primary key default gen_random_uuid(),
   pedido_id          uuid not null references pedidos(id) on delete cascade,
   producto_id        uuid not null references productos(id),
-  talla_id           uuid references tallas(id),
+  talla_stock        uuid references tallas(id),
+  talla_vendida      uuid references tallas(id),
   entalle            boolean not null default false,
-  talla_inicial      uuid references tallas(id),
   cantidad           int not null default 1 check (cantidad >= 1),
   precio_unitario    numeric(10,2) not null default 0,
   subtotal           numeric(10,2) not null default 0,
@@ -226,7 +226,11 @@ create table detalles_pedido (
   viaje_id           uuid references viajes(id),
   anadido_por        uuid references usuarios(id),
   confirmado_el      timestamptz,
-  creado_el          timestamptz not null default now()
+  creado_el          timestamptz not null default now(),
+  -- talla_stock = la talla que hay en almacén (la que se toma y consume stock);
+  -- talla_vendida = lo que pidió el cliente (destino). Por lo general son iguales;
+  -- cuando hay entalle difieren. Ambas se llenan juntas (o ninguna, si es sin_talla).
+  constraint detalles_pedido_tallas_ambas_o_ninguna check ((talla_stock is null) = (talla_vendida is null))
 );
 
 -- ---------- Viaje_Producto_Unico (alistado: escaneo de QRs) ----------

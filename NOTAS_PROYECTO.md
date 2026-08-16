@@ -92,6 +92,25 @@ configuración.
     solo paso (exige cliente + fecha de entrega). Corrige la inconsistencia pre-existente:
     el POST insertaba `solicitado` siempre. La lista de pedidos ahora filtra por
     **Borrador** (badge gris) y el detalle de un borrador permite "Confirmar pedido".
+16. **El entalle NO es un true/false** (16/ago/2026): es un **campo con otra talla**.
+    - **`talla_stock`** = la talla que hay en almacén (origen): la unidad física que se
+      toma y la que **consume stock**. Siempre se llena.
+    - **`talla_vendida`** = lo que pidió el cliente (destino). Por lo general es igual a
+      `talla_stock`; cuando hay entalle son distintas. **Siempre se llena** también: si el
+      checkbox "Entallar a" no está marcado, se guarda automáticamente el mismo valor que
+      `talla_stock`. No está limitada por el stock (cualquier talla puede convertirse en esta).
+    - `entalle = (talla_stock != talla_vendida)`, derivado al insertar/actualizar.
+    - Columnas renombradas en `detalles_pedido` por migración **`supabase/07_talla_stock_vendida.sql`**:
+      `talla_inicial` → `talla_stock`, `talla_id` → `talla_vendida` (constraints renombrados a
+      `detalles_pedido_talla_stock_fkey` / `detalles_pedido_talla_vendida_fkey`). Invariante:
+      ambas se llenan juntas (o ninguna, para productos `sin_talla`). `02_schema.sql` ya usa los
+      nombres nuevos (solo aplica 07 en la BD existente).
+    - UI nuevo pedido y modal "Editar productos": **"Talla"** = talla stock (solo tallas con
+      stock disponible) + checkbox **"Entallar a"** que habilita el select **"Talla a
+      entallar"** (destino, todas las tallas del producto, default = la talla de stock).
+    - Alistar: la unidad escaneada debe tener `talla_id == talla_stock`; luego se modifica a
+      `talla_vendida` si difieren (`talla_original` guarda la previa, evento `entallado`).
+    - Muestra: pedido y viaje muestran `talla_stock → talla_vendida` cuando hay entalle.
 
 ## Preguntas respondidas en el camino (resumen técnico)
 
@@ -99,8 +118,8 @@ configuración.
   guardaba la cookie `Secure` sobre `http://`, y (b) el server de `:3000` era un build viejo.
   Reconstruyendo y reiniciando funcionó. Flujo sesión verificado con cookie.
 - **¿Por qué fallaba agregar detalle de pedido?** Error de PostgREST: `detalles_pedido` tiene
-  **dos** FKs a `tallas` (`talla_id` y `talla_inicial`) → embed ambiguo. Se arregló usando
-  hint `tallas!detalles_pedido_talla_id_fkey(nombre)` en 6 archivos.
+  **dos** FKs a `tallas` (`talla_stock` y `talla_vendida`) → embed ambiguo. Se arregló usando
+  hint `tallas!detalles_pedido_talla_vendida_fkey(nombre)` en los selects.
 - **¿Por qué faltaba la columna en la lista de pedidos?** `resumen_productos` no existía en
   `supabase/02_schema.sql` (la usaba el código). Se agregó la columna al schema y se re-corrió.
 - **¿Por qué el PATCH del viaje fallaba en el smoke test?** El script enviaba POST (curl `-d`
@@ -111,7 +130,7 @@ configuración.
 ## Bugs corregidos (de esta fase)
 
 1. `pedidos.resumen_productos` faltaba en `supabase/02_schema.sql` → se agregó (columna `text`).
-2. Embed ambiguo `detalles_pedido → tallas` (doble FK) → hint `!detalles_pedido_talla_id_fkey`
+2. Embed ambiguo `detalles_pedido → tallas` (doble FK) → hint `!detalles_pedido_talla_vendida_fkey`
    en: `lib/pedidos.ts`, `api/viajes/[id]/route.ts`, `api/viajes/[id]/alistar/route.ts`,
    `api/pedidos/[id]/confirmar/route.ts`, `api/pedidos/[id]/detalles/route.ts`,
    `api/pedidos/[id]/detalles/[detalleId]/route.ts`.
@@ -128,9 +147,12 @@ configuración.
 4. `supabase/04_tallas.sql` → agrega `AB` y `ABC` al enum `tipo_talla` (para multi-talla).
 5. `supabase/05_pedidos_equipo.sql` → agrega `pedidos.vendedora_contribuyente_2_id` y
    `pedidos.agendadora_id` (para el equipo de vendedoras del pedido).
+6. `supabase/07_talla_stock_vendida.sql` → renombra en `detalles_pedido`: `talla_inicial` →
+   `talla_stock` y `talla_id` → `talla_vendida` (+ constraints y backfill). Para la **BD
+   existente**; en una BD nueva ya vienen con ese nombre en `02_schema.sql`.
 
-Para una BD nueva: **01 → 02 → 03 → 04 → 05**. Para la BD existente: basta correr
-**03, 04 y 05** (aditivas e idempotentes; no tocan datos).
+Para una BD nueva: **01 → 02 → 03 → 04 → 05** (07 no hace falta). Para la BD existente: basta
+correr **03, 04, 05 y 07** (aditivas/idempotentes; no tocan datos).
 (La migración `06_stock_ventas.sql` se creó y luego **se eliminó**: la regla de stock ventas
 es 100% JS, `getStockVentasPorTalla`, sin vista ni función SQL.)
 
@@ -183,9 +205,13 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 
 ## Pendientes / notas
 
-- Todas las migraciones SQL (`03_tandas`, `04_tallas`, `05_pedidos_equipo`) **ya están
-  corriendo en Supabase** (el usuario las corrió el 16/ago/2026). "Añadir stock", tallas
-  AB/ABC y el equipo de vendedoras del pedido ya funcionan.
+- Las migraciones `03_tandas`, `04_tallas`, `05_pedidos_equipo` **ya están corriendo en
+  Supabase** (el usuario las corrió el 16/ago/2026). "Añadir stock", tallas AB/ABC y el
+  equipo de vendedoras ya funcionan.
+- **`supabase/07_talla_stock_vendida.sql` PENDIENTE**: el usuario debe correrla en el SQL
+  Editor para que el código del entalle (que ya usa `talla_stock`/`talla_vendida`)
+  funcione contra la BD existente. Mientras no se corra, los endpoints fallarán al
+  referenciar columnas que no existen.
 - El smoke test dejó **datos de prueba** en la BD (productos/clientes/pedidos con "SMOKE").
   Preguntar al usuario si limpiarlos.
 - La ruta `detalles/route.ts` devuelve el mensaje de Postgres en errores (útil para debug;

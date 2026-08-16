@@ -41,8 +41,11 @@
      - `visita` → método: a_domicilio | local_peri · empresa: Motorizado
    - Canal de venta, costo de envío, dirección/ciudad/link Maps.
    - **Método de pago** + **Partes a pagar** (ver §4.1).
-   - Productos: búsqueda por nombre/IMEI, talla, cantidad (no puede exceder el
-     stock disponible por talla), precio, género.
+    - Productos: búsqueda por nombre/IMEI, talla (ver §4.4), cantidad (no puede exceder el
+      stock disponible en la talla que se consume), precio, género. Opcionalmente se marca
+      **"Entallar a"** para indicar la talla vendida (destino): la prenda se toma de la talla
+      de stock y se modifica a la talla vendida (el consumo de stock es en la talla de stock;
+      la talla vendida puede tener 0 stock porque el entalle la "produce").
     - **Equipo de vendedoras**: Vendedora, Vendedora que colaboró 1 y Vendedora que
       colaboró 2 (por defecto = quien crea el pedido; cambiable a cualquier vendedora
       activa). La **Agendadora** no se muestra al crear (por defecto = quien crea) y
@@ -143,7 +146,13 @@
 - **Tallas A/B/C**: un producto puede tener una o varias; los combos (AB/AC/BC/ABC)
   se agregan con la migración `04_tallas.sql` (ver pendientes).
 - El **entalle** cambia la talla actual de la unidad; la original queda en
-  `talla_original` y se registra en el historial.
+  `talla_original` y se registra en el historial. Cada detalle de pedido tiene dos tallas:
+  **`talla_stock`** (origen: la talla que hay en almacén, la unidad que se toma) y
+  **`talla_vendida`** (destino: la talla que pidió el cliente). Ambas **siempre se llenan**
+  (son iguales cuando no hay entalle); `entalle` es un derivado
+  (`talla_stock != talla_vendida`).
+- **Regla de stock con entalle:** la unidad que se consume/reserva es la de la
+  **talla_stock** (`talla_stock ?? talla_vendida`), no la destino.
 - **Stock por talla** = unidades existentes (excepto `eliminado`), no solo las
   `en_almacen`. El stock se carga con **tandas** (Productos Únicos → Añadir stock).
 - **Stock ventas (comercial)** = stock almacén por talla **menos** las unidades
@@ -153,9 +162,12 @@
   cancelados/devueltos. Se ve en Productos → Lista con el toggle "Stock almacén / Stock
   ventas". Número azul = disponible, gris = 0, rojo = negativo (vendido de más).
 - **Regla de negocio:** TODAS las validaciones al crear/editar un pedido usan el
-  **stock de ventas**, no el de almacén: el select de tallas del pedido (nuevo pedido y
-  modal "Editar productos") solo ofrece tallas con disponible > 0, y el servidor valida
-  contra `getStockVentasPorTalla` al agregar un producto o subir su cantidad.
+  **stock de ventas**, no el de almacén: el select de **"Talla"** (talla stock) solo
+  ofrece tallas con disponible > 0, y el servidor valida contra
+  `getStockVentasPorTalla` al agregar un producto o subir su cantidad (la talla que se
+  valida es la **stock**; es la que consume). El checkbox **"Entallar a"** habilita el
+  select de **"Talla a entallar"** (talla vendida), que muestra **todas** las tallas del
+  producto: puede tener 0 stock porque la unidad se toma de la talla stock y se modifica.
 - **Validación en el click al guardar (batch):** "Guardar Pedido" / "Terminar después"
   envían el pedido completo en **un solo request** (`POST /api/pedidos` con `lineas[]`).
   El servidor **relee la BD en ese momento**, valida todo el lote por resta contra el
@@ -174,8 +186,9 @@
 ### 4.5 Alistado de viajes (escanear QR)
 
 - El producto debe estar `en_almacen` y pertenecer al listado del viaje.
-- Coincide talla exacta, salvo si el detalle es `entalle` (entonces cualquier talla
-  del producto y la unidad se entalla).
+- Coincide talla exacta: la unidad escaneada debe tener `talla_id == talla_stock`
+  (la talla que hay en almacén). Si el detalle tiene **entalle**
+  (`talla_stock != talla_vendida`), luego se entalla a la **talla vendida** (destino).
 - No puede exceder la `cantidad` del detalle. No se puede alistar en un viaje ya
   `enviado`/`terminado` ni un QR ya alistado en el viaje.
 - Para marcar el viaje **alistado** se exige que **todas** las unidades del viaje
@@ -219,8 +232,10 @@
 2. **Cancelar un pedido confirmado**: ¿qué pasa con el viaje programado y las
    unidades que ya se alistaron?
 3. **Password en texto plano** (riesgo; MVP). ¿Migrar a hash?
-4. **Pendientes SQL**: falta ejecutar `03_tandas.sql` y `04_tallas.sql` en Supabase
-   (sin `04`, no existen los combos AB/AC/BC/ABC).
+4. **Pendientes SQL**: `03_tandas`, `04_tallas` y `05_pedidos_equipo` ya están en
+   Supabase; falta ejecutar **`07_talla_stock_vendida.sql`** (renombra las columnas de
+   talla del detalle a `talla_stock`/`talla_vendida`) para que el código del entalle
+   funcione contra la BD existente.
 5. **Datos de prueba "SMOKE"** quedaron en la BD. ¿Limpiarlos?
 6. El enum `tipo_talla` del `02_schema.sql` no incluye `AB`/`ABC` (solo los agrega
    `04_tallas.sql`). Al reconstruir la BD hay que correr ambos.

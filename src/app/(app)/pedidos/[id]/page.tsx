@@ -68,13 +68,17 @@ type Pedido = {
 type Detalle = {
   id: string;
   producto_id: string;
-  talla_id: string | null;
+  talla: string | null;
+  talla_stock: string | null;
+  talla_stock_nombre: string | null;
+  talla_vendida: string | null;
+  talla_vendida_nombre: string | null;
   cantidad: number;
   precio_unitario: number;
   subtotal: number;
-  talla: string | null;
   imei: string;
   producto_nombre: string;
+  entalle: boolean;
   es_extra_motorizado: boolean;
 };
 
@@ -224,7 +228,11 @@ export default function PedidoDetallePage() {
                             {d.producto_nombre}
                             {d.es_extra_motorizado ? " · +motorizado" : ""}
                           </td>
-                          <td className="border-r border-slate-200 px-3 py-2 text-slate-600">{d.talla ?? "Sin talla"}</td>
+                          <td className="border-r border-slate-200 px-3 py-2 text-slate-600">
+                            {d.entalle
+                              ? `${d.talla_stock_nombre ?? "—"} → ${d.talla_vendida_nombre ?? "Sin talla"}`
+                              : d.talla_vendida_nombre ?? "Sin talla"}
+                          </td>
                           <td className="border-r border-slate-200 px-3 py-2 text-right">
                             <span className="text-slate-600">{d.cantidad}</span>
                             <span className="ml-1 text-xs text-slate-400">x S/ {Number(d.precio_unitario).toFixed(2)}</span>
@@ -664,15 +672,20 @@ type LineaEditable = {
   id: string;
   imei: string;
   nombre: string;
-  talla: string | null;
-  talla_id: string | null;
+  talla_stock: string | null;
+  talla_stock_nombre: string | null;
+  talla_vendida: string | null;
+  talla_vendida_nombre: string | null;
   producto_id: string;
   cantidad: number;
   precio: number;
+  entalle: boolean;
   esNueva?: boolean;
   eliminada?: boolean;
   originalCantidad: number;
   originalPrecio: number;
+  originalTallaStock: string | null;
+  originalTallaVendida: string | null;
 };
 
 function EditarProductosModal({
@@ -686,8 +699,13 @@ function EditarProductosModal({
 }) {
   const [productos, setProductos] = useState<{ id: string; imei: string; nombre: string }[]>([]);
   const [tallas, setTallas] = useState<{ id: string; nombre: string; cantidad_ventas: number }[]>([]);
+  const [tallasPorProducto, setTallasPorProducto] = useState<
+    Record<string, { id: string; nombre: string; cantidad_ventas: number }[]>
+  >({});
   const [productoId, setProductoId] = useState("");
-  const [tallaId, setTallaId] = useState("");
+  const [tallaStock, setTallaStock] = useState("");
+  const [entalle, setEntalle] = useState(false);
+  const [tallaVendida, setTallaVendida] = useState("");
   const [cantidad, setCantidad] = useState("1");
   const [precio, setPrecio] = useState("");
   const [genero, setGenero] = useState("dama");
@@ -699,34 +717,46 @@ function EditarProductosModal({
       id: d.id,
       imei: d.imei,
       nombre: d.producto_nombre,
-      talla: d.talla,
-      talla_id: d.talla_id,
+      talla_stock: d.talla_stock,
+      talla_stock_nombre: d.talla_stock_nombre,
+      talla_vendida: d.talla_vendida,
+      talla_vendida_nombre: d.talla_vendida_nombre ?? d.talla,
       producto_id: d.producto_id,
       cantidad: d.cantidad,
       precio: d.precio_unitario,
+      entalle: d.entalle,
       originalCantidad: d.cantidad,
       originalPrecio: d.precio_unitario,
+      originalTallaStock: d.talla_stock,
+      originalTallaVendida: d.talla_vendida,
     }))
   );
+
+  function cargarTallas(pid: string) {
+    api<{ tallas: { id: string; nombre: string; cantidad_ventas: number }[] }>(
+      "/api/tallas?producto_id=" + pid
+    ).then(({ data }) => {
+      const ts = data?.tallas ?? [];
+      setTallas(ts);
+      setTallasPorProducto((prev) => ({ ...prev, [pid]: ts }));
+    });
+  }
 
   useEffect(() => {
     api<{ productos: { id: string; imei: string; nombre: string }[] }>("/api/productos").then(({ data }) =>
       setProductos(data?.productos ?? [])
     );
+    const ids = [...new Set(detalles.map((d) => d.producto_id))];
+    for (const pid of ids) cargarTallas(pid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  function cargarTallas(pid: string) {
-    api<{ tallas: { id: string; nombre: string; cantidad_ventas: number }[] }>(
-      "/api/tallas?producto_id=" + pid
-    ).then(({ data }) => setTallas(data?.tallas ?? []));
-  }
 
   useEffect(() => {
     if (productoId) {
-      setTallaId("");
+      setTallaStock("");
+      setEntalle(false);
+      setTallaVendida("");
       cargarTallas(productoId);
-    } else {
-      setTallas([]);
     }
   }, [productoId]);
 
@@ -734,13 +764,15 @@ function EditarProductosModal({
     setLineas((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   }
 
-  // Delta local por (producto_id|talla_id): lo que este pedido sumaría/quitaría
-  // del stock de ventas con los cambios pendientes.
+  // Delta local por (producto_id|talla_stock): lo que este pedido sumaría/quitaría
+  // del stock de ventas con los cambios pendientes. La talla que consume stock es
+  // SIEMPRE la talla stock (la unidad física que se toma y modifica).
   function deltasLocal() {
     const deltas: Record<string, number> = {};
     for (const l of lineas) {
-      if (!l.talla_id) continue;
-      const k = `${l.producto_id}|${l.talla_id}`;
+      const origen = l.talla_stock ?? l.talla_vendida;
+      if (!origen) continue;
+      const k = `${l.producto_id}|${origen}`;
       if (l.esNueva && l.eliminada) continue;
       if (!l.esNueva && l.eliminada) {
         deltas[k] = (deltas[k] ?? 0) + l.originalCantidad;
@@ -760,12 +792,10 @@ function EditarProductosModal({
   // Disponible local por (producto, talla): cantidad_ventas (ya excluye este
   // pedido) + deltas pendientes.
   const dispLocal = (pid: string, tid: string) => {
-    const t = tallas.find((x) => x.id === tid);
+    const t = (tallasPorProducto[pid] ?? []).find((x) => x.id === tid);
     const base = t?.cantidad_ventas ?? 0;
     return base + (deltas[`${pid}|${tid}`] ?? 0);
   };
-
-  const tallasDisponibles = tallas.filter((t) => dispLocal(productoId, t.id) > 0);
 
   function agregar() {
     setError(null);
@@ -776,11 +806,16 @@ function EditarProductosModal({
       setError("Indica una cantidad válida");
       return;
     }
-    if (tallaId && dispLocal(productoId, tallaId) < cant) {
-      setError(`Stock insuficiente: solo hay ${dispLocal(productoId, tallaId)} disponible en esa talla`);
+    // "Talla" es la talla de stock (origen): consume stock. Si se marca "Entallar a",
+    // la talla vendida (destino) se toma del select; si no, es la misma.
+    const stockId = tallaStock || null;
+    const vendidaId = entalle ? (tallaVendida || tallaStock) : tallaStock;
+    if (stockId && dispLocal(productoId, stockId) < cant) {
+      setError(`Stock insuficiente: solo hay ${dispLocal(productoId, stockId)} disponible en esa talla`);
       return;
     }
-    const talla = tallas.find((t) => t.id === tallaId);
+    const stockSel = tallas.find((t) => t.id === stockId);
+    const vendidaSel = tallas.find((t) => t.id === vendidaId);
     setNuevoN((n) => n + 1);
     setLineas((prev) => [
       ...prev,
@@ -788,18 +823,25 @@ function EditarProductosModal({
         id: `nuevo-${nuevoN}`,
         imei: p.imei,
         nombre: p.nombre,
-        talla: talla?.nombre ?? null,
-        talla_id: tallaId || null,
+        talla_stock: stockId,
+        talla_stock_nombre: stockSel?.nombre ?? null,
+        talla_vendida: vendidaId || null,
+        talla_vendida_nombre: vendidaSel?.nombre ?? null,
         producto_id: p.id,
         cantidad: cant,
         precio: Number(precio || 0),
+        entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
         esNueva: true,
         originalCantidad: cant,
         originalPrecio: Number(precio || 0),
+        originalTallaStock: stockId,
+        originalTallaVendida: vendidaId || null,
       },
     ]);
     setProductoId("");
-    setTallaId("");
+    setTallaStock("");
+    setEntalle(false);
+    setTallaVendida("");
     setCantidad("1");
     setPrecio("");
   }
@@ -818,10 +860,15 @@ function EditarProductosModal({
     setError(null);
     setLoading(true);
 
-    // Validación local: ningún (producto,talla) del producto en edición debe quedar negativo.
-    const negativos = tallas
-      .map((t) => ({ talla: t, disp: dispLocal(productoId, t.id) }))
-      .filter((x) => x.disp < 0);
+    // Validación local: ningún (producto,talla) de los productos en edición debe quedar negativo.
+    const productosEnEdicion = [...new Set(lineas.map((l) => l.producto_id))];
+    const negativos: { talla: { nombre: string }; disp: number }[] = [];
+    for (const pid of productosEnEdicion) {
+      for (const t of tallasPorProducto[pid] ?? []) {
+        const disp = dispLocal(pid, t.id);
+        if (disp < 0) negativos.push({ talla: t, disp });
+      }
+    }
     if (negativos.length > 0) {
       setError(
         `Stock insuficiente en ${negativos[0].talla.nombre} (queda ${negativos[0].disp}). Revisa las cantidades.`
@@ -832,7 +879,13 @@ function EditarProductosModal({
 
     const eliminadas = lineas.filter((l) => l.eliminada);
     const modificadas = lineas.filter(
-      (l) => !l.eliminada && !l.esNueva && (l.cantidad !== l.originalCantidad || l.precio !== l.originalPrecio)
+      (l) =>
+        !l.eliminada &&
+        !l.esNueva &&
+        (l.cantidad !== l.originalCantidad ||
+          l.precio !== l.originalPrecio ||
+          l.talla_stock !== l.originalTallaStock ||
+          l.talla_vendida !== l.originalTallaVendida)
     );
     const nuevas = lineas.filter((l) => l.esNueva && !l.eliminada);
 
@@ -849,7 +902,13 @@ function EditarProductosModal({
     for (const l of modificadas) {
       const { error: e } = await api(`/api/pedidos/${pedidoId}/detalles/${l.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ cantidad: Number(l.cantidad), precio_unitario: Number(l.precio) }),
+        body: JSON.stringify({
+          cantidad: Number(l.cantidad),
+          precio_unitario: Number(l.precio),
+          talla_stock: l.talla_stock,
+          talla_vendida: l.entalle ? l.talla_vendida : l.talla_stock,
+          entalle: l.entalle,
+        }),
       });
       if (e) {
         setError(e);
@@ -863,7 +922,9 @@ function EditarProductosModal({
         method: "POST",
         body: JSON.stringify({
           producto_id: l.producto_id,
-          talla_id: l.talla_id,
+          talla_stock: l.talla_stock,
+          talla_vendida: l.entalle ? l.talla_vendida : l.talla_stock,
+          entalle: l.entalle,
           cantidad: l.cantidad,
           precio_unitario: l.precio,
           genero,
@@ -906,18 +967,49 @@ function EditarProductosModal({
                 <option key={p.id} value={p.id}>{p.nombre} ({p.imei})</option>
               ))}
             </Select>
-            <Select label="Talla" value={tallaId} onChange={(e) => setTallaId(e.target.value)}>
+            <Select label="Talla" value={tallaStock} onChange={(e) => { setTallaStock(e.target.value); setTallaVendida(e.target.value); }}>
               <option value="">Sin talla</option>
-              {tallasDisponibles.length > 0 ? (
-                tallasDisponibles.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.nombre} ({dispLocal(productoId, t.id)} disp.)
-                  </option>
-                ))
+              {tallas.filter((t) => dispLocal(productoId, t.id) > 0).length > 0 ? (
+                tallas
+                  .filter((t) => dispLocal(productoId, t.id) > 0)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nombre} ({dispLocal(productoId, t.id)} disp.)
+                    </option>
+                  ))
               ) : (
                 <option value="" disabled>Sin stock</option>
               )}
             </Select>
+            <div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={entalle}
+                  onChange={(e) => {
+                    setEntalle(e.target.checked);
+                    if (e.target.checked && !tallaVendida) setTallaVendida(tallaStock);
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                Entallar a
+              </label>
+              {entalle && (
+                <Select
+                  label="Talla a entallar"
+                  value={tallaVendida}
+                  onChange={(e) => setTallaVendida(e.target.value)}
+                  className="mt-2"
+                >
+                  <option value="">Selecciona...</option>
+                  {tallas.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nombre}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </div>
             <Input label="Cantidad" type="number" min={1} value={cantidad} onChange={(e) => setCantidad(e.target.value)} />
             <Input label="Precio unitario (S/)" type="number" step="0.01" value={precio} onChange={(e) => setPrecio(e.target.value)} />
             <Select label="Género" value={genero} onChange={(e) => setGenero(e.target.value)}>
@@ -950,9 +1042,86 @@ function EditarProductosModal({
                       <p className="text-sm font-medium">
                         {l.nombre} <span className="text-xs text-slate-400">({l.imei})</span>
                       </p>
-                      <p className="text-xs text-slate-500">{l.talla ?? "Sin talla"}</p>
+                      <p className="text-xs text-slate-500">
+                        {l.entalle
+                          ? `Entalle ${l.talla_stock_nombre ?? "Sin talla"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                          : l.talla_vendida_nombre ?? "Sin talla"}
+                      </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={l.talla_stock ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value || null;
+                          const stockNombre =
+                            (tallasPorProducto[l.producto_id] ?? []).find((t) => t.id === v)?.nombre ?? null;
+                          const vendidaId = l.entalle ? l.talla_vendida : v;
+                          const vendidaNombre = l.entalle
+                            ? l.talla_vendida_nombre
+                            : stockNombre;
+                          actualizarLinea(l.id, {
+                            talla_stock: v,
+                            talla_stock_nombre: stockNombre,
+                            talla_vendida: vendidaId,
+                            talla_vendida_nombre: vendidaNombre,
+                            entalle: Boolean(v && vendidaId && v !== vendidaId),
+                          });
+                        }}
+                        className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 outline-none focus:border-blue-500"
+                        title="Talla en stock: la unidad que se toma (la que consume stock)"
+                      >
+                        <option value="">Sin talla</option>
+                        {(tallasPorProducto[l.producto_id] ?? [])
+                          .filter((t) => t.id === l.talla_stock || dispLocal(l.producto_id, t.id) > 0)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.nombre} ({dispLocal(l.producto_id, t.id)} disp.)
+                            </option>
+                          ))}
+                      </select>
+                      <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={l.entalle}
+                          onChange={(e) => {
+                            const on = e.target.checked;
+                            const vendidaId = on ? l.talla_vendida || l.talla_stock : l.talla_stock;
+                            const vendidaNombre = on
+                              ? l.talla_vendida_nombre || l.talla_stock_nombre
+                              : l.talla_stock_nombre;
+                            actualizarLinea(l.id, {
+                              entalle: on,
+                              talla_vendida: vendidaId,
+                              talla_vendida_nombre: vendidaNombre,
+                            });
+                          }}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        Entallar a
+                      </label>
+                      {l.entalle && (
+                        <select
+                          value={l.talla_vendida ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value || null;
+                            actualizarLinea(l.id, {
+                              talla_vendida: v,
+                              talla_vendida_nombre:
+                                (tallasPorProducto[l.producto_id] ?? []).find((t) => t.id === v)?.nombre ?? null,
+                              entalle: Boolean(l.talla_stock && v && l.talla_stock !== v),
+                            });
+                          }}
+                          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 outline-none focus:border-blue-500"
+                          title="Talla vendida (destino): lo que pidió el cliente, no limitada por stock"
+                        >
+                          <option value="">Sin talla</option>
+                          {(tallasPorProducto[l.producto_id] ?? []).map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       <input
                         type="number"
                         min={1}

@@ -18,6 +18,10 @@ type Item = {
   imei: string;
   nombre: string;
   talla: string | null;
+  talla_stock: string | null;
+  talla_stock_nombre: string | null;
+  talla_vendida: string | null;
+  talla_vendida_nombre: string | null;
   cantidad: number;
   alistados: number;
   falta: number;
@@ -183,7 +187,8 @@ export default function ViajeDetalle() {
                   {i.nombre} <span className="text-xs text-slate-400">({i.imei})</span>
                 </p>
                 <p className="text-xs text-slate-500">
-                  {i.talla ?? "Sin talla"} · {i.cantidad} unidades{i.entalle ? " · entalle" : ""}
+                  {i.talla_vendida_nombre ?? "Sin talla"} · {i.cantidad} unidades
+                  {i.talla_stock_nombre ? ` · entalle desde ${i.talla_stock_nombre}` : ""}
                 </p>
               </div>
               <div className="text-right">

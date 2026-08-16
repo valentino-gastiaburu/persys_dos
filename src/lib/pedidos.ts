@@ -109,14 +109,15 @@ export async function getDetallesActivos(pedidoId: string) {
   const supabase = getSupabase();
   const { data } = await supabase
     .from("detalles_pedido")
-    .select("*, productos(imei, nombre), tallas!detalles_pedido_talla_id_fkey(nombre)")
+    .select("*, productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre), tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)")
     .eq("pedido_id", pedidoId)
     .eq("estado", "activo")
     .order("creado_el");
   return (data ?? []).map((d: any) => ({
     ...d,
     talla: d.tallas?.nombre ?? null,
-    talla_inicial_nombre: d.talla_inicial ? undefined : undefined,
+    talla_stock_nombre: d.tallas_stock?.nombre ?? null,
+    talla_vendida_nombre: d.tallas?.nombre ?? null,
     imei: d.productos?.imei,
     producto_nombre: d.productos?.nombre,
   }));
@@ -142,7 +143,7 @@ export async function confirmarPedido(
 
   const { data: detallesData } = await supabase
     .from("detalles_pedido")
-    .select("producto_id, cantidad, talla_id, genero, es_extra_motorizado, subtotal, tallas!detalles_pedido_talla_id_fkey(nombre)")
+    .select("producto_id, cantidad, talla_vendida, genero, es_extra_motorizado, subtotal, tallas!detalles_pedido_talla_vendida_fkey(nombre)")
     .eq("pedido_id", id)
     .eq("estado", "activo");
 

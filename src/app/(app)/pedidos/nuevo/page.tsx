@@ -17,7 +17,10 @@ type Cliente = {
 
 type Linea = {
   producto_id: string;
-  talla_id: string | null;
+  talla_stock: string | null;
+  talla_stock_nombre: string | null;
+  talla_vendida: string | null;
+  talla_vendida_nombre: string | null;
   cantidad: number;
   precio_unitario: number;
   genero: string;
@@ -101,6 +104,8 @@ export default function NuevoPedidoPage() {
   const [prodAbierto, setProdAbierto] = useState(false);
   const [selProducto, setSelProducto] = useState("");
   const [selTalla, setSelTalla] = useState("");
+  const [selEntallar, setSelEntallar] = useState(false);
+  const [selTallaVendida, setSelTallaVendida] = useState("");
   const [selCantidad, setSelCantidad] = useState("1");
   const [selPrecio, setSelPrecio] = useState("");
   const [selGenero, setSelGenero] = useState("dama");
@@ -168,6 +173,8 @@ export default function NuevoPedidoPage() {
   useEffect(() => {
     if (selProducto) {
       setSelTalla("");
+      setSelEntallar(false);
+      setSelTallaVendida("");
       setSelCantidad("1");
       api<{ tallas: Talla[] }>("/api/tallas?producto_id=" + selProducto).then(({ data }) =>
         setTallas(data?.tallas ?? [])
@@ -182,7 +189,9 @@ export default function NuevoPedidoPage() {
 
   const tallaSel = tallas.find((t) => t.id === selTalla);
 
-  // Las reglas usan el stock de ventas (almacén − comprometidas en pedidos).
+  // El campo "Talla" es la talla de STOCK (origen): la unidad física que se toma.
+  // El entalle es opcional: la talla vendida (destino) se llena con la misma talla
+  // si el checkbox no está marcado, y no está limitada por stock cuando lo está.
   const disponible = tallaSel?.cantidad_ventas ?? 0;
   const cantidadExcede = selTalla ? Number(selCantidad) > disponible : false;
   const tallasConStock = tallas.filter((t) => t.cantidad_ventas > 0);
@@ -226,9 +235,14 @@ export default function NuevoPedidoPage() {
     const precio = Number(selPrecio);
     if (!p || !cant || cant <= 0) return;
 
-    if (selTalla) {
+    // "Talla" es la talla de stock (origen): es la que consume stock.
+    // La talla vendida (destino) se llena sola con la misma si no hay entalle.
+    const tallaStockId = selTalla || null;
+    const tallaVendidaIdFinal = selEntallar ? (selTallaVendida || selTalla) : selTalla;
+
+    if (tallaStockId) {
       const yaEnLineas = lineas
-        .filter((l) => l.producto_id === p.id && l.talla_id === selTalla)
+        .filter((l) => l.producto_id === p.id && l.talla_stock === tallaStockId)
         .reduce((acc, l) => acc + l.cantidad, 0);
       if (yaEnLineas + cant > disponible) {
         setError(
@@ -242,11 +256,14 @@ export default function NuevoPedidoPage() {
       ...prev,
       {
         producto_id: p.id,
-        talla_id: selTalla || null,
+        talla_stock: tallaStockId,
+        talla_stock_nombre: tallaSel?.nombre ?? null,
+        talla_vendida: tallaVendidaIdFinal || null,
+        talla_vendida_nombre: (tallas.find((t) => t.id === tallaVendidaIdFinal)?.nombre) ?? null,
         cantidad: cant,
         precio_unitario: precio,
         genero: selGenero,
-        entalle: false,
+        entalle: Boolean(tallaStockId && tallaVendidaIdFinal && tallaStockId !== tallaVendidaIdFinal),
         es_extra_motorizado: false,
         imei: p.imei,
         nombre: p.nombre,
@@ -255,6 +272,8 @@ export default function NuevoPedidoPage() {
     setSelProducto("");
     setProdQ("");
     setSelTalla("");
+    setSelEntallar(false);
+    setSelTallaVendida("");
     setSelCantidad("1");
     setSelPrecio("");
   }
@@ -303,7 +322,8 @@ export default function NuevoPedidoPage() {
         regalo: false,
         lineas: lineas.map((l) => ({
           producto_id: l.producto_id,
-          talla_id: l.talla_id,
+          talla_stock: l.talla_stock,
+          talla_vendida: l.talla_vendida,
           cantidad: l.cantidad,
           precio_unitario: l.precio_unitario,
           genero: l.genero,
@@ -610,18 +630,47 @@ export default function NuevoPedidoPage() {
                 </div>
               )}
             </div>
-            <Select label="Talla" value={selTalla} onChange={(e) => { setSelTalla(e.target.value); setSelCantidad("1"); }}>
+            <Select label="Talla" value={selTalla} onChange={(e) => { setSelTalla(e.target.value); setSelTallaVendida(e.target.value); setSelCantidad("1"); }}>
                 <option value="">Sin talla</option>
                 {tallasConStock.length > 0 ? (
                   tallasConStock.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.nombre} ({t.cantidad_ventas})
+                      {t.nombre} ({t.cantidad_ventas} disp.)
                     </option>
                   ))
                 ) : (
                   <option value="" disabled>Sin stock</option>
                 )}
             </Select>
+            <div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={selEntallar}
+                  onChange={(e) => {
+                    setSelEntallar(e.target.checked);
+                    if (e.target.checked && !selTallaVendida) setSelTallaVendida(selTalla);
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                Entallar a
+              </label>
+              {selEntallar && (
+                <Select
+                  label="Talla a entallar"
+                  value={selTallaVendida}
+                  onChange={(e) => setSelTallaVendida(e.target.value)}
+                  className="mt-2"
+                >
+                  <option value="">Selecciona...</option>
+                  {tallas.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nombre}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </div>
             <div>
               <Input
                 label="Cantidad"
@@ -675,6 +724,10 @@ export default function NuevoPedidoPage() {
                         {l.nombre} <span className="text-xs text-slate-400">({l.imei})</span>
                       </p>
                       <p className="text-xs text-slate-500">
+                        {l.entalle
+                          ? `Entalle ${l.talla_stock_nombre} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                          : l.talla_vendida_nombre ?? "Sin talla"}
+                        {" · "}
                         {l.cantidad} x S/ {l.precio_unitario.toFixed(2)} = S/ {(l.cantidad * l.precio_unitario).toFixed(2)}
                       </p>
                     </div>

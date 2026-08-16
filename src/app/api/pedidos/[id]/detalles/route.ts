@@ -24,7 +24,10 @@ export async function POST(
   }
 
   const productoId = body.producto_id;
-  const tallaId = body.talla_id || null;
+  // talla_stock = la que hay en almacén (origen, consume stock).
+  // talla_vendida = lo que pidió el cliente (destino); si no hay entalle = talla_stock.
+  const tallaStock = body.talla_stock || null;
+  const tallaVendida = body.entalle ? (body.talla_vendida || tallaStock) : tallaStock;
   const cantidad = Number(body.cantidad ?? 1);
   const precioUnitario = Number(body.precio_unitario ?? 0);
 
@@ -34,10 +37,12 @@ export async function POST(
   }
   if (precioUnitario < 0) return Response.json({ error: "Precio inválido" }, { status: 400 });
 
-  // Verificar stock de ventas disponible (almacén − comprometidas en pedidos)
+  // Verificar stock de ventas disponible (almacén − comprometidas en pedidos).
+  // La talla que se consume es la STOCK (la unidad física que se toma y modifica).
   const stockVentas = await getStockVentasPorTalla();
-  const disponible = Number(stockVentas[`${productoId}|${tallaId}`] ?? 0);
-  if (tallaId && disponible < cantidad) {
+  const tallaReserva = tallaStock ?? tallaVendida;
+  const disponible = Number(stockVentas[`${productoId}|${tallaReserva}`] ?? 0);
+  if (tallaReserva && disponible < cantidad) {
     return Response.json(
       { error: `Stock insuficiente: solo hay ${disponible} en esa talla` },
       { status: 400 }
@@ -51,9 +56,9 @@ export async function POST(
     .insert({
       pedido_id: id,
       producto_id: productoId,
-      talla_id: tallaId,
-      entalle: Boolean(body.entalle),
-      talla_inicial: body.talla_inicial || null,
+      talla_stock: tallaStock,
+      talla_vendida: tallaVendida,
+      entalle: Boolean(tallaStock && tallaVendida && tallaStock !== tallaVendida),
       cantidad,
       precio_unitario: precioUnitario,
       subtotal,
@@ -61,7 +66,7 @@ export async function POST(
       es_extra_motorizado: Boolean(body.es_extra_motorizado),
       anadido_por: user.id,
     })
-    .select("*, productos(imei, nombre), tallas!detalles_pedido_talla_id_fkey(nombre)")
+    .select("*, productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre)")
     .single();
 
   if (err || !detalle) {

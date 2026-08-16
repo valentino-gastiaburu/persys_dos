@@ -18,16 +18,22 @@ export async function POST(request: NextRequest) {
 
   const lineas: {
     producto_id: string;
-    talla_id: string | null;
+    talla_stock: string | null;
+    talla_vendida: string | null;
     cantidad: number;
     precio_unitario?: number;
     entalle?: boolean;
-    talla_inicial?: string | null;
     genero?: string;
     es_extra_motorizado?: boolean;
   }[] = body.lineas ?? [];
   if (lineas.length === 0) {
     return Response.json({ error: "El pedido no tiene productos" }, { status: 400 });
+  }
+
+  // Normalizar tallas: la talla vendida SIEMPRE queda llena (igual a la de
+  // stock si no hay entalle). El entalle es que ambas difieran.
+  for (const l of lineas) {
+    l.talla_vendida = l.entalle ? (l.talla_vendida ?? l.talla_stock) : l.talla_stock;
   }
 
   const { conflictos } = await validarStockLineas(lineas);
@@ -76,12 +82,14 @@ export async function POST(request: NextRequest) {
   // Insertar todas las líneas en un solo batch.
   const detalles = lineas.map((l) => {
     const precioUnitario = Number(l.precio_unitario ?? 0);
+    const tallaStock = l.talla_stock || null;
+    const tallaVendida = l.talla_vendida || null;
     return {
       pedido_id: pedido.id,
       producto_id: l.producto_id,
-      talla_id: l.talla_id || null,
-      entalle: Boolean(l.entalle),
-      talla_inicial: l.talla_inicial || null,
+      talla_stock: tallaStock,
+      talla_vendida: tallaVendida,
+      entalle: Boolean(tallaStock && tallaVendida && tallaStock !== tallaVendida),
       cantidad: Number(l.cantidad),
       precio_unitario: precioUnitario,
       subtotal: Number(l.cantidad) * precioUnitario,

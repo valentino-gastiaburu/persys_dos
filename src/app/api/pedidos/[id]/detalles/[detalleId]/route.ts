@@ -43,24 +43,40 @@ export async function PATCH(
   if (body.precio_unitario !== undefined) {
     updates.precio_unitario = Number(body.precio_unitario);
   }
+  if (body.talla_stock !== undefined) updates.talla_stock = body.talla_stock || null;
+  if (body.talla_vendida !== undefined) updates.talla_vendida = body.talla_vendida || null;
   if (body.entalle !== undefined) updates.entalle = Boolean(body.entalle);
-  if (body.talla_inicial !== undefined) updates.talla_inicial = body.talla_inicial || null;
   if (body.genero !== undefined) updates.genero = body.genero;
   if (body.es_extra_motorizado !== undefined) updates.es_extra_motorizado = Boolean(body.es_extra_motorizado);
+
+  // Normalizar: la talla vendida siempre queda llena (igual a la de stock si no
+  // hay entalle); el entalle real es que ambas difieran.
+  if (updates.talla_stock !== undefined || updates.entalle !== undefined || updates.talla_vendida !== undefined) {
+    const tallaStock = updates.talla_stock !== undefined ? updates.talla_stock : detalle.talla_stock;
+    let tallaVendida = updates.talla_vendida !== undefined ? updates.talla_vendida : detalle.talla_vendida;
+    if (!updates.entalle) tallaVendida = tallaStock;
+    updates.talla_stock = tallaStock;
+    updates.talla_vendida = tallaVendida;
+    updates.entalle = Boolean(tallaStock && tallaVendida && tallaStock !== tallaVendida);
+  }
 
   const cantidad = Number(updates.cantidad ?? detalle.cantidad);
   const precio = Number(updates.precio_unitario ?? detalle.precio_unitario);
   updates.subtotal = cantidad * precio;
 
   // Al aumentar la cantidad, verificar stock de ventas (el stock ya incluye este detalle).
-  if (updates.cantidad !== undefined && cantidad > Number(detalle.cantidad) && detalle.talla_id) {
-    const stockVentas = await getStockVentasPorTalla();
-    const disponible = Number(stockVentas[`${detalle.producto_id}|${detalle.talla_id}`] ?? 0);
-    if (disponible + Number(detalle.cantidad) < cantidad) {
-      return Response.json(
-        { error: `Stock insuficiente: solo puedes llegar a ${disponible + Number(detalle.cantidad)} en esa talla` },
-        { status: 400 }
-      );
+  // La talla que se consume es la STOCK.
+  if (updates.cantidad !== undefined && cantidad > Number(detalle.cantidad)) {
+    const tallaReserva = updates.talla_stock !== undefined ? updates.talla_stock : detalle.talla_stock;
+    if (tallaReserva) {
+      const stockVentas = await getStockVentasPorTalla();
+      const disponible = Number(stockVentas[`${detalle.producto_id}|${tallaReserva}`] ?? 0);
+      if (disponible + Number(detalle.cantidad) < cantidad) {
+        return Response.json(
+          { error: `Stock insuficiente: solo puedes llegar a ${disponible + Number(detalle.cantidad)} en esa talla` },
+          { status: 400 }
+        );
+      }
     }
   }
 
@@ -68,7 +84,7 @@ export async function PATCH(
     .from("detalles_pedido")
     .update(updates)
     .eq("id", detalleId)
-    .select("*, productos(imei, nombre), tallas!detalles_pedido_talla_id_fkey(nombre)")
+    .select("*, productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre)")
     .single();
 
   if (err || !actualizado) {

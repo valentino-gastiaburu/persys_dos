@@ -52,12 +52,13 @@ export async function POST(
     return Response.json({ error: "Ese producto ya fue alistado en este viaje" }, { status: 400 });
   }
 
-  // Buscar un detalle del viaje que necesite este producto (mismo IMEI y talla, o entalle)
+  // Buscar un detalle del viaje que necesite este producto.
   const { data: detalles } = await supabase
     .from("detalles_pedido")
     .select(`
-      id, producto_id, talla_id, cantidad, entalle,
-      productos(imei), tallas!detalles_pedido_talla_id_fkey(nombre)
+      id, producto_id, talla_stock, talla_vendida, cantidad, entalle,
+      productos(imei), tallas!detalles_pedido_talla_vendida_fkey(nombre),
+      tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
     `)
     .eq("viaje_id", id)
     .eq("estado", "activo")
@@ -81,12 +82,14 @@ export async function POST(
     contador[a.detalle_pedido_id] = (contador[a.detalle_pedido_id] ?? 0) + 1;
   }
 
-  // Elegir detalle: sin entalle -> talla exacta; con entalle -> cualquier talla del producto
+  // Elegir detalle: la unidad debe tener la talla STOCK (la que hay en almacén);
+  // si el detalle tiene entalle se modifica a la talla vendida (destino).
   let detalleElegido: any = null;
   for (const d of detalles) {
     const ya = contador[d.id] ?? 0;
     if (ya >= Number(d.cantidad)) continue;
-    if (!d.entalle && d.talla_id !== unico.talla_id) continue;
+    const tallaOrigen = d.talla_stock ?? d.talla_vendida;
+    if (unico.talla_id !== tallaOrigen) continue;
     detalleElegido = d;
     break;
   }
@@ -94,7 +97,11 @@ export async function POST(
   if (!detalleElegido) {
     const pendientes = detalles
       .filter((d: any) => (contador[d.id] ?? 0) < Number(d.cantidad))
-      .map((d: any) => `${d.productos?.imei} (${d.tallas?.nombre ?? "Sin talla"})`);
+      .map((d: any) =>
+        d.entalle
+          ? `${d.productos?.imei} (toma ${d.tallas_stock?.nombre ?? "Sin talla"} → ${d.tallas?.nombre ?? "Sin talla"})`
+          : `${d.productos?.imei} (${d.tallas?.nombre ?? "Sin talla"})`
+      );
     if (pendientes.length === 0) {
       return Response.json(
         { error: "Ya se subieron todos los productos que necesita este viaje" },
@@ -107,11 +114,12 @@ export async function POST(
     );
   }
 
-  // Aplicar entalle si aplica: la talla destino cambia la talla actual del único
+  // Aplicar entalle si aplica: la talla vendida (destino) cambia la talla actual del único
   let tallaNueva = unico.talla_id;
   let fueEntallado = false;
-  if (detalleElegido.entalle && unico.talla_id !== detalleElegido.talla_id) {
-    tallaNueva = detalleElegido.talla_id;
+  const tallaDestino = detalleElegido.talla_vendida ?? detalleElegido.talla_stock;
+  if (tallaDestino && unico.talla_id !== tallaDestino) {
+    tallaNueva = tallaDestino;
     fueEntallado = true;
   }
 

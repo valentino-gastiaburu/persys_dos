@@ -127,6 +127,8 @@ async function getConteoPorTalla() {
 // Reservan stock los pedidos en estados activos (solicitado, confirmado, alistado,
 // enviado, entregado, cerrado, esperando_devolucion, esperando_cambio);
 // NO reservan los borradores ni los cancelados/devueltos.
+// Un detalle con entalle consume la talla STOCK (la unidad física que se toma y
+// modifica), no la talla vendida.
 async function getComprometidasPorTalla() {
   const supabase = getSupabase();
   const { data: pedidos } = await supabase
@@ -138,12 +140,13 @@ async function getComprometidasPorTalla() {
   if (ids.length === 0) return comprometidas;
   const { data: detalles } = await supabase
     .from("detalles_pedido")
-    .select("producto_id, talla_id, cantidad")
+    .select("producto_id, talla_stock, talla_vendida, cantidad")
     .eq("estado", "activo")
     .in("pedido_id", ids);
   for (const d of detalles ?? []) {
-    if (!d.talla_id) continue;
-    const k = `${d.producto_id}|${d.talla_id}`;
+    const tallaReserva = d.talla_stock ?? d.talla_vendida;
+    if (!tallaReserva) continue;
+    const k = `${d.producto_id}|${tallaReserva}`;
     comprometidas[k] = (comprometidas[k] ?? 0) + Number(d.cantidad);
   }
   return comprometidas;
@@ -219,7 +222,8 @@ export async function listarProductos() {
 
 export interface LineaStock {
   producto_id: string;
-  talla_id: string | null;
+  talla_stock: string | null;
+  talla_vendida: string | null;
   cantidad: number;
 }
 
@@ -250,8 +254,11 @@ export async function validarStockLineas(
 
   const necesitado: Record<string, number> = {};
   for (const l of lineas) {
-    if (!l.talla_id) continue;
-    const k = `${l.producto_id}|${l.talla_id}`;
+    // Un entalle consume la talla STOCK: la unidad física que se toma y se
+    // modifica a la talla vendida.
+    const tallaReserva = l.talla_stock ?? l.talla_vendida;
+    if (!tallaReserva) continue;
+    const k = `${l.producto_id}|${tallaReserva}`;
     necesitado[k] = (necesitado[k] ?? 0) + Number(l.cantidad || 0);
   }
 
