@@ -1,14 +1,16 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { generarCodigoPedido, confirmarPedido } from "@/lib/pedidos";
+import { generarCodigoPedido, generarResumen, calcularTotal } from "@/lib/pedidos";
 import { validarStockLineas } from "@/lib/productos";
 
 // POST /api/pedidos — crea el pedido completo en un solo lote.
 // Body: campos del pedido + lineas[] + confirmar (boolean).
 // Valida el lote contra el stock de ventas (relee la BD): si algo quedara
 // negativo, no crea nada y responde { conflictos }.
-// El pedido nace como borrador; si confirmar=true se confirma en la misma llamada.
+// El pedido nace como borrador ("Terminar después") o solicitado ("Guardar
+// Pedido", reserva stock). La confirmación (crea viaje + primer pago) es un
+// paso posterior con el botón "Confirmar pedido".
 export async function POST(request: NextRequest) {
   const { user, error } = await requireRoles(["vendedora", "agendadora", "controller", "admin"]);
   if (error) return error;
@@ -105,19 +107,47 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "No se pudieron registrar los productos" }, { status: 500 });
   }
 
-  // Si se pidió confirmar, confirmar en la misma llamada (crea el viaje).
+  // "Guardar Pedido": el pedido nace como SOLICITADO (reserva stock), NO como
+  // confirmado. La confirmación (crea el viaje + primer pago) la hace la
+  // vendedora después con el botón "Confirmar pedido".
   if (body.confirmar) {
-    const { pedido: confirmado, viaje, error: errConfirmar } = await confirmarPedido(pedido.id, user.id);
-    if (errConfirmar || !confirmado) {
-      // Todo-o-nada: revertir el pedido recién creado.
+    const { data: detallesData, error: errTotales } = await supabase
+      .from("detalles_pedido")
+      .select("producto_id, cantidad, talla_vendida, genero, es_extra_motorizado, subtotal, tallas!detalles_pedido_talla_vendida_fkey(nombre)")
+      .eq("pedido_id", pedido.id)
+      .eq("estado", "activo");
+    if (errTotales) {
       await supabase.from("detalles_pedido").delete().eq("pedido_id", pedido.id);
       await supabase.from("pedidos").delete().eq("id", pedido.id);
-      return Response.json(
-        { error: errConfirmar ?? "No se pudo confirmar el pedido" },
-        { status: 400 }
-      );
+      return Response.json({ error: "No se pudo calcular el total" }, { status: 500 });
     }
-    return Response.json({ pedido: confirmado, confirmado: true, viaje }, { status: 201 });
+
+    const dets = (detallesData ?? []).map((d: any) => ({
+      ...d,
+      talla: d.tallas?.nombre ?? null,
+    }));
+    const resumen = await generarResumen(dets);
+    const montoTotal = calcularTotal(
+      dets.map((d) => ({ subtotal: Number(d.subtotal ?? 0) })),
+      Number(pedido.costo_envio ?? 0)
+    );
+
+    const { data: solicitado, error: errSolicitado } = await supabase
+      .from("pedidos")
+      .update({
+        estado: "solicitado",
+        resumen_productos: resumen,
+        monto_total: montoTotal,
+      })
+      .eq("id", pedido.id)
+      .select()
+      .single();
+    if (errSolicitado || !solicitado) {
+      await supabase.from("detalles_pedido").delete().eq("pedido_id", pedido.id);
+      await supabase.from("pedidos").delete().eq("id", pedido.id);
+      return Response.json({ error: "No se pudo crear el pedido" }, { status: 500 });
+    }
+    return Response.json({ pedido: solicitado, confirmado: false }, { status: 201 });
   }
 
   return Response.json({ pedido, confirmado: false }, { status: 201 });

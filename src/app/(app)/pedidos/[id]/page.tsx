@@ -297,7 +297,7 @@ export default function PedidoDetallePage() {
             <div className="p-5">
               {viajes.length === 0 ? (
                 <p className="text-sm text-slate-400">
-                  Sin viajes {pedido.estado === "borrador" ? "(confirma el pedido para crear el primer viaje)" : ""}.
+                  Sin viajes {["borrador", "solicitado"].includes(pedido.estado) ? "(confirma el pedido para crear el primer viaje)" : ""}.
                 </p>
               ) : (
                 <div className="space-y-1">
@@ -946,6 +946,7 @@ function EditarProductosModal({
       open
       onClose={onClose}
       title="Editar productos"
+      xwide
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
@@ -960,14 +961,14 @@ function EditarProductosModal({
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-700">
             Agregar producto
           </h3>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <Select label="Producto" value={productoId} onChange={(e) => setProductoId(e.target.value)}>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+            <Select label="Producto" value={productoId} onChange={(e) => setProductoId(e.target.value)} className="md:col-span-12">
               <option value="">Selecciona...</option>
               {productos.map((p) => (
                 <option key={p.id} value={p.id}>{p.nombre} ({p.imei})</option>
               ))}
             </Select>
-            <Select label="Talla" value={tallaStock} onChange={(e) => { setTallaStock(e.target.value); setTallaVendida(e.target.value); }}>
+            <Select label="Talla" value={tallaStock} onChange={(e) => { setTallaStock(e.target.value); setTallaVendida(e.target.value); }} className="md:col-span-3">
               <option value="">Sin talla</option>
               {tallas.filter((t) => dispLocal(productoId, t.id) > 0).length > 0 ? (
                 tallas
@@ -981,8 +982,8 @@ function EditarProductosModal({
                 <option value="" disabled>Sin stock</option>
               )}
             </Select>
-            <div>
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+            <div className="md:col-span-2">
+              <label className="mb-1 flex h-5 cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-700">
                 <input
                   type="checkbox"
                   checked={entalle}
@@ -996,12 +997,10 @@ function EditarProductosModal({
               </label>
               {entalle && (
                 <Select
-                  label="Talla a entallar"
                   value={tallaVendida}
                   onChange={(e) => setTallaVendida(e.target.value)}
-                  className="mt-2"
                 >
-                  <option value="">Selecciona...</option>
+                  <option value="">Sin talla</option>
                   {tallas.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.nombre}
@@ -1010,9 +1009,9 @@ function EditarProductosModal({
                 </Select>
               )}
             </div>
-            <Input label="Cantidad" type="number" min={1} value={cantidad} onChange={(e) => setCantidad(e.target.value)} />
-            <Input label="Precio unitario (S/)" type="number" step="0.01" value={precio} onChange={(e) => setPrecio(e.target.value)} />
-            <Select label="Género" value={genero} onChange={(e) => setGenero(e.target.value)}>
+            <Input label="Cantidad" type="number" min={1} value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="md:col-span-2" />
+            <Input label="Precio (S/)" type="number" step="0.01" value={precio} onChange={(e) => setPrecio(e.target.value)} className="md:col-span-3" />
+            <Select label="Género" value={genero} onChange={(e) => setGenero(e.target.value)} className="md:col-span-2">
               <option value="dama">Dama</option>
               <option value="caballero">Caballero</option>
             </Select>
@@ -1036,19 +1035,18 @@ function EditarProductosModal({
             {lineas
               .filter((l) => !l.eliminada)
               .map((l) => (
-                <div key={l.id} className="p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                <div key={l.id} className="p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">
-                        {l.nombre} <span className="text-xs text-slate-400">({l.imei})</span>
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {l.entalle
-                          ? `Entalle ${l.talla_stock_nombre ?? "Sin talla"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
-                          : l.talla_vendida_nombre ?? "Sin talla"}
+                      <p className="text-base font-semibold text-slate-800">
+                        {l.nombre} <span className="text-sm font-normal text-slate-400">({l.imei})</span>
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant="danger" onClick={() => quitar(l)}>Quitar</Button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-12">
+                    <div className="md:col-span-3">
+                      <label className="mb-1 block text-xs font-medium text-slate-600">Talla</label>
                       <select
                         value={l.talla_stock ?? ""}
                         onChange={(e) => {
@@ -1067,7 +1065,7 @@ function EditarProductosModal({
                             entalle: Boolean(v && vendidaId && v !== vendidaId),
                           });
                         }}
-                        className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 outline-none focus:border-blue-500"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         title="Talla en stock: la unidad que se toma (la que consume stock)"
                       >
                         <option value="">Sin talla</option>
@@ -1079,7 +1077,9 @@ function EditarProductosModal({
                             </option>
                           ))}
                       </select>
-                      <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
+                    </div>
+                    <div className="md:col-span-3">
+                      <label className="mb-1 flex h-4 cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
                         <input
                           type="checkbox"
                           checked={l.entalle}
@@ -1095,11 +1095,11 @@ function EditarProductosModal({
                               talla_vendida_nombre: vendidaNombre,
                             });
                           }}
-                          className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                         />
                         Entallar a
                       </label>
-                      {l.entalle && (
+                      {l.entalle ? (
                         <select
                           value={l.talla_vendida ?? ""}
                           onChange={(e) => {
@@ -1111,7 +1111,7 @@ function EditarProductosModal({
                               entalle: Boolean(l.talla_stock && v && l.talla_stock !== v),
                             });
                           }}
-                          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 outline-none focus:border-blue-500"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                           title="Talla vendida (destino): lo que pidió el cliente, no limitada por stock"
                         >
                           <option value="">Sin talla</option>
@@ -1121,22 +1121,35 @@ function EditarProductosModal({
                             </option>
                           ))}
                         </select>
+                      ) : (
+                        <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-400">—</p>
                       )}
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-xs font-medium text-slate-600">Cantidad</label>
                       <input
                         type="number"
                         min={1}
                         value={l.cantidad}
                         onChange={(e) => actualizarLinea(l.id, { cantidad: Number(e.target.value) })}
-                        className="w-16 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-blue-500"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-xs font-medium text-slate-600">Precio unitario</label>
                       <input
                         type="number"
                         step="0.01"
                         value={l.precio}
                         onChange={(e) => actualizarLinea(l.id, { precio: Number(e.target.value) })}
-                        className="w-24 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-blue-500"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
-                      <Button size="sm" variant="danger" onClick={() => quitar(l)}>Quitar</Button>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-xs font-medium text-slate-600">Subtotal</label>
+                      <p className="rounded-lg bg-slate-50 px-3 py-2 text-right text-sm font-semibold text-slate-800">
+                        S/ {(l.cantidad * l.precio).toFixed(2)}
+                      </p>
                     </div>
                   </div>
                 </div>

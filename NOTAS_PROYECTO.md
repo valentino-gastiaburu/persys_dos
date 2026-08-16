@@ -188,11 +188,14 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 
 ## Flujo de estados del pedido
 
-- **Nace como `borrador`** con "Terminar después" (POST /api/pedidos con `confirmar=false`) o
-  como `confirmado` con "Guardar Pedido" (`confirmar=true`, crea viaje + resumen + total +
-  primer pago en la misma llamada).
+- **Nace como `borrador`** con "Terminar después" (POST /api/pedidos con `confirmar=false`,
+  no reserva stock) o como **`solicitado`** con "Guardar Pedido" (`confirmar=true`: reserva
+  stock y calcula resumen + total; **NO** crea viaje ni confirma).
+- La confirmación es un paso aparte (botón "Confirmar pedido", `POST
+  /api/pedidos/[id]/confirmar` → `confirmarPedido`): crea el viaje de entrega, calcula
+  resumen/total si faltan y registra el primer pago.
 - Transiciones **manuales** (tabla de pedidos y detalle, vía `POST /api/pedidos/[id]/estado`):
-  - `borrador`/`solicitado` → `confirmado` (botón Confirmar, usa `/confirmar`), `cancelado`
+  - `solicitado` → `confirmado` (botón Confirmar, usa `/confirmar`), `cancelado`
   - `confirmado` → `solicitado` (Volver a Solicitar), `cancelado`
 - Transición **automática**: `confirmado` → `alistado` cuando su viaje de entrega pasa a
   `alistado` (`syncEstadoPedidoPorViajes` en `lib/pedidos.ts`). Luego `enviado`/`entregado`
@@ -208,10 +211,9 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - Las migraciones `03_tandas`, `04_tallas`, `05_pedidos_equipo` **ya están corriendo en
   Supabase** (el usuario las corrió el 16/ago/2026). "Añadir stock", tallas AB/ABC y el
   equipo de vendedoras ya funcionan.
-- **`supabase/07_talla_stock_vendida.sql` PENDIENTE**: el usuario debe correrla en el SQL
-  Editor para que el código del entalle (que ya usa `talla_stock`/`talla_vendida`)
-  funcione contra la BD existente. Mientras no se corra, los endpoints fallarán al
-  referenciar columnas que no existen.
+- **`supabase/07_talla_stock_vendida.sql`** ya la corrió el usuario (16/ago/2026):
+  `detalles_pedido` usa `talla_stock`/`talla_vendida` en Supabase. Verificado vía
+  REST (`select=talla_stock,talla_vendida,entalle`).
 - El smoke test dejó **datos de prueba** en la BD (productos/clientes/pedidos con "SMOKE").
   Preguntar al usuario si limpiarlos.
 - La ruta `detalles/route.ts` devuelve el mensaje de Postgres en errores (útil para debug;

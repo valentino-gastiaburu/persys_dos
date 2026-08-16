@@ -41,14 +41,14 @@ export function Input({
   ...props
 }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; danger?: boolean }) {
   return (
-    <label className="block text-sm">
+    <label className={`block text-sm ${className}`}>
       {label && <span className="mb-1 block font-medium text-slate-700">{label}</span>}
       <input
         className={`w-full rounded-lg border bg-white px-3 py-2 text-sm outline-none ${
           danger
             ? "border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-100"
             : "border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-        } ${className}`}
+        }`}
         {...props}
       />
     </label>
@@ -62,10 +62,10 @@ export function Select({
   ...props
 }: React.SelectHTMLAttributes<HTMLSelectElement> & { label?: string }) {
   return (
-    <label className="block text-sm">
+    <label className={`block text-sm ${className}`}>
       {label && <span className="mb-1 block font-medium text-slate-700">{label}</span>}
       <select
-        className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${className}`}
+        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
         {...props}
       >
         {children}
@@ -80,10 +80,10 @@ export function Textarea({
   ...props
 }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label?: string }) {
   return (
-    <label className="block text-sm">
+    <label className={`block text-sm ${className}`}>
       {label && <span className="mb-1 block font-medium text-slate-700">{label}</span>}
       <textarea
-        className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${className}`}
+        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
         {...props}
       />
     </label>
@@ -97,6 +97,7 @@ export function Modal({
   children,
   footer,
   wide = false,
+  xwide = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -104,13 +105,14 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  xwide?: boolean;
 }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
-        className={`relative z-10 w-full ${wide ? "max-w-3xl" : "max-w-lg"} max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl`}
+        className={`relative z-10 w-full ${xwide ? "max-w-4xl" : wide ? "max-w-3xl" : "max-w-lg"} max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl`}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <h3 className="text-base font-semibold text-slate-800">{title}</h3>

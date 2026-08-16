@@ -585,8 +585,8 @@ export default function NuevoPedidoPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Productos</h2>
           <div className="flex flex-col gap-3 md:flex-row md:items-end">
             <div ref={recuadroRef} className="flex-1 rounded-lg border border-blue-200 bg-blue-50 p-3">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-            <div className="relative md:col-span-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+            <div className="relative md:col-span-3">
               <span className="mb-1 block font-medium text-slate-700">Producto</span>
               <input
                 value={prodQ}
@@ -630,7 +630,7 @@ export default function NuevoPedidoPage() {
                 </div>
               )}
             </div>
-            <Select label="Talla" value={selTalla} onChange={(e) => { setSelTalla(e.target.value); setSelTallaVendida(e.target.value); setSelCantidad("1"); }}>
+            <Select label="Talla" value={selTalla} onChange={(e) => { setSelTalla(e.target.value); setSelTallaVendida(e.target.value); setSelCantidad("1"); }} className="md:col-span-2">
                 <option value="">Sin talla</option>
                 {tallasConStock.length > 0 ? (
                   tallasConStock.map((t) => (
@@ -642,8 +642,8 @@ export default function NuevoPedidoPage() {
                   <option value="" disabled>Sin stock</option>
                 )}
             </Select>
-            <div>
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+            <div className="md:col-span-2">
+              <label className="mb-1 flex h-5 cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-700">
                 <input
                   type="checkbox"
                   checked={selEntallar}
@@ -657,12 +657,10 @@ export default function NuevoPedidoPage() {
               </label>
               {selEntallar && (
                 <Select
-                  label="Talla a entallar"
                   value={selTallaVendida}
                   onChange={(e) => setSelTallaVendida(e.target.value)}
-                  className="mt-2"
                 >
-                  <option value="">Selecciona...</option>
+                  <option value="">Sin talla</option>
                   {tallas.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.nombre}
@@ -671,7 +669,7 @@ export default function NuevoPedidoPage() {
                 </Select>
               )}
             </div>
-            <div>
+            <div className="md:col-span-1">
               <Input
                 label="Cantidad"
                 type="number"
@@ -683,18 +681,19 @@ export default function NuevoPedidoPage() {
               />
               {selTalla && (
                 <p className={`mt-1 text-xs ${cantidadExcede ? "font-medium text-red-600" : "text-slate-400"}`}>
-                  Disponible: {disponible} unidad(es)
+                  Disp: {disponible}
                 </p>
               )}
             </div>
             <Input
-              label="Precio unitario (S/)"
+              label="Precio (S/)"
               type="number"
               step="0.01"
               value={selPrecio}
               onChange={(e) => setSelPrecio(e.target.value)}
+              className="md:col-span-2"
             />
-            <Select label="Género" value={selGenero} onChange={(e) => setSelGenero(e.target.value)}>
+            <Select label="Género" value={selGenero} onChange={(e) => setSelGenero(e.target.value)} className="md:col-span-2">
               <option value="dama">Dama</option>
               <option value="caballero">Caballero</option>
             </Select>
@@ -712,30 +711,51 @@ export default function NuevoPedidoPage() {
           </div>
 
           {lineas.length > 0 && (
-            <div className="mt-4 space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <div className="mt-4">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Productos agregados ({lineas.length})
               </h3>
-              <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
-                {lineas.map((l, i) => (
-                  <div key={i} className="flex items-center justify-between bg-slate-50 px-3 py-2 text-sm">
-                    <div>
-                      <p className="font-medium">
-                        {l.nombre} <span className="text-xs text-slate-400">({l.imei})</span>
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {l.entalle
-                          ? `Entalle ${l.talla_stock_nombre} → ${l.talla_vendida_nombre ?? "Sin talla"}`
-                          : l.talla_vendida_nombre ?? "Sin talla"}
-                        {" · "}
-                        {l.cantidad} x S/ {l.precio_unitario.toFixed(2)} = S/ {(l.cantidad * l.precio_unitario).toFixed(2)}
-                      </p>
-                    </div>
-                    <button onClick={() => setLineas((prev) => prev.filter((_, j) => j !== i))} className="text-red-500">
-                      Quitar
-                    </button>
-                  </div>
-                ))}
+              <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                      <th className="px-3 py-2 font-semibold">IMEI</th>
+                      <th className="px-3 py-2 font-semibold">TALLA</th>
+                      <th className="px-3 py-2 font-semibold">ENTALLE</th>
+                      <th className="px-3 py-2 text-right font-semibold">CANTIDAD</th>
+                      <th className="px-3 py-2 text-right font-semibold">PRECIO UNITARIO</th>
+                      <th className="px-3 py-2 text-right font-semibold">SUBTOTAL</th>
+                      <th className="px-3 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {lineas.map((l, i) => (
+                      <tr key={i} className="bg-white">
+                        <td className="px-3 py-2">
+                          <span className="block font-medium">{l.imei}</span>
+                          <span className="block text-xs text-slate-400">{l.nombre}</span>
+                        </td>
+                        <td className="px-3 py-2 text-slate-600">{l.talla_vendida_nombre ?? "Sin talla"}</td>
+                        <td className="px-3 py-2 text-slate-600">
+                          {l.entalle ? l.talla_stock_nombre ?? "Sin talla" : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-600">{l.cantidad}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">S/ {l.precio_unitario.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-medium text-slate-800">
+                          S/ {(l.cantidad * l.precio_unitario).toFixed(2)}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            onClick={() => setLineas((prev) => prev.filter((_, j) => j !== i))}
+                            className="text-xs font-medium text-red-500 hover:text-red-700"
+                          >
+                            Quitar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}

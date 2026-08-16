@@ -52,9 +52,10 @@
       solo se ve en el **detalle del pedido**.
     - Guardar → **"Terminar después"** crea el pedido en **`borrador`** (no reserva
       stock; puede seguir editándose y confirmarse después). **"Guardar Pedido"** crea
-      y confirma en un solo paso (pedido `confirmado` + viaje).
-3. **Confirmación** (vendedora): calcula total y resumen, crea el **viaje de
-   entrega** (programado) y registra el **primer pago** si aplica.
+      el pedido en **`solicitado`** (reserva stock) y calcula el resumen/total.
+3. **Confirmación** (vendedora): botón **"Confirmar pedido"** — calcula total y
+   resumen (si faltan), crea el **viaje de entrega** (programado) y registra el
+   **primer pago** si aplica. El pedido pasa a `confirmado`.
 4. **Almacén** → Almacén / Viajes: abre el viaje y **escanea QRs** para alistar
    cada unidad (valida talla; aplica *entalle* si la prenda lo requiere; controla
    cantidades por detalle). Con todas las unidades alistadas, marca el viaje
@@ -78,13 +79,13 @@
 
 ```
    crear: "Terminar después" → BORRADOR (no reserva stock)
-          "Guardar Pedido" → CONFIRMADO directo (crea viaje)
+          "Guardar Pedido" → SOLICITADO (reserva stock, resumen/total)
         │
         ▼
    ┌────────────┐   Confirmar   ┌───────────────┐
    │ SOLICITADO │ ────────────► │  CONFIRMADO   │
    │            │               │               │
-   │  ─ Confirmar (vía /confirmar)              │
+   │  ─ Confirmar (vía /confirmar, crea viaje + primer pago)
    │  ─ Cancelar (manual)         ─ Cancelar (manual)
    └────────────┘               │  ─ Volver a Solicitar (manual)
         ▲                       └───────┬───────┘
@@ -232,10 +233,9 @@
 2. **Cancelar un pedido confirmado**: ¿qué pasa con el viaje programado y las
    unidades que ya se alistaron?
 3. **Password en texto plano** (riesgo; MVP). ¿Migrar a hash?
-4. **Pendientes SQL**: `03_tandas`, `04_tallas` y `05_pedidos_equipo` ya están en
-   Supabase; falta ejecutar **`07_talla_stock_vendida.sql`** (renombra las columnas de
-   talla del detalle a `talla_stock`/`talla_vendida`) para que el código del entalle
-   funcione contra la BD existente.
+4. **Pendientes SQL**: `03_tandas`, `04_tallas`, `05_pedidos_equipo` y
+   `07_talla_stock_vendida` ya están en Supabase (07 corrida el 16/ago/2026;
+   `detalles_pedido` usa `talla_stock`/`talla_vendida`).
 5. **Datos de prueba "SMOKE"** quedaron en la BD. ¿Limpiarlos?
 6. El enum `tipo_talla` del `02_schema.sql` no incluye `AB`/`ABC` (solo los agrega
    `04_tallas.sql`). Al reconstruir la BD hay que correr ambos.
