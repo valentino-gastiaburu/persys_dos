@@ -121,3 +121,104 @@ export async function getDetallesActivos(pedidoId: string) {
     producto_nombre: d.productos?.nombre,
   }));
 }
+
+// Confirma un pedido: estado -> confirmado, crea el viaje de entrega, resumen,
+// total y primer pago. Devuelve { pedido, viaje } o { error }.
+export async function confirmarPedido(
+  id: string,
+  userId: string
+): Promise<{ pedido?: any; viaje?: any; error?: string }> {
+  const supabase = getSupabase();
+
+  const { data: pedido } = await supabase.from("pedidos").select("*").eq("id", id).single();
+  if (!pedido) return { error: "Pedido no encontrado" };
+  if (!["borrador", "solicitado"].includes(pedido.estado)) {
+    return { error: "El pedido ya fue confirmado" };
+  }
+
+  if (!pedido.cliente_id || !pedido.fecha_entrega) {
+    return { error: "Falta cliente o fecha de entrega" };
+  }
+
+  const { data: detallesData } = await supabase
+    .from("detalles_pedido")
+    .select("producto_id, cantidad, talla_id, genero, es_extra_motorizado, subtotal, tallas!detalles_pedido_talla_id_fkey(nombre)")
+    .eq("pedido_id", id)
+    .eq("estado", "activo");
+
+  const detalles = (detallesData ?? []).map((d: any) => ({
+    ...d,
+    talla: d.tallas?.nombre ?? null,
+  }));
+
+  if (detalles.length === 0) {
+    return { error: "El pedido no tiene productos" };
+  }
+
+  const resumen = await generarResumen(detalles);
+  const montoTotal = calcularTotal(
+    detalles.map((d) => ({ subtotal: Number(d.subtotal ?? 0) })),
+    Number(pedido.costo_envio ?? 0)
+  );
+
+  const viajeCodigo = await generarCodigoViaje();
+
+  const { data: viaje, error: viajeErr } = await supabase
+    .from("viajes")
+    .insert({
+      codigo: viajeCodigo,
+      pedido_id: id,
+      tipo: "entrega",
+      estado: "programado",
+      fecha: pedido.fecha_entrega,
+      creado_por: userId,
+    })
+    .select()
+    .single();
+
+  if (viajeErr || !viaje) {
+    return { error: "No se pudo crear el viaje" };
+  }
+
+  await supabase
+    .from("detalles_pedido")
+    .update({ viaje_id: viaje.id, confirmado_el: new Date().toISOString() })
+    .eq("pedido_id", id)
+    .eq("estado", "activo");
+
+  const { data: confirmado, error: pedidoErr } = await supabase
+    .from("pedidos")
+    .update({
+      estado: "confirmado",
+      confirmado_el: new Date().toISOString(),
+      resumen_productos: resumen,
+      monto_total: montoTotal,
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (pedidoErr || !confirmado) {
+    return { error: "No se pudo confirmar el pedido" };
+  }
+
+  await registrarHistorialPedido({
+    pedido_id: id,
+    estado_anterior: pedido.estado,
+    estado_nuevo: "confirmado",
+    persona_id: userId,
+    motivo: "Pedido confirmado por la vendedora",
+  });
+
+  if (Number(confirmado.monto_primer_pago) > 0) {
+    await supabase.from("pagos").insert({
+      pedido_id: id,
+      monto: Number(confirmado.monto_primer_pago),
+      metodo_pago: confirmado.metodo_pago || "efectivo",
+      persona_id: userId,
+      tipo: "primer_pago",
+    });
+  }
+
+  return { pedido: confirmado, viaje };
+}

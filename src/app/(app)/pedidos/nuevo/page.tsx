@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button, Input, Select, Modal, ErrorBanner } from "@/components/ui";
 
 type Producto = { id: string; imei: string; nombre: string };
-type Talla = { id: string; nombre: string; cantidad: number };
+type Talla = { id: string; nombre: string; cantidad: number; cantidad_ventas: number };
 type Cliente = {
   id: string;
   nombre: string;
@@ -25,6 +25,22 @@ type Linea = {
   es_extra_motorizado: boolean;
   imei: string;
   nombre: string;
+};
+
+type ConflictoStock = {
+  producto_id: string;
+  talla_id: string;
+  producto_imei: string;
+  producto_nombre: string;
+  talla_nombre: string;
+  cantidad: number;
+  disponible: number;
+  pedidos: {
+    codigo: string | null;
+    estado: string;
+    cliente: string | null;
+    cantidad: number;
+  }[];
 };
 
 const METODOS_POR_TIPO: Record<string, string[]> = {
@@ -51,6 +67,12 @@ export default function NuevoPedidoPage() {
   const router = useRouter();
 
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [vendedoras, setVendedoras] = useState<{ id: string; nombre: string }[]>([]);
+  const [miId, setMiId] = useState("");
+  const [miNombre, setMiNombre] = useState("");
+  const [vendedora1, setVendedora1] = useState("");
+  const [vendedora2, setVendedora2] = useState("");
+  const [vendedora3, setVendedora3] = useState("");
   const [productos, setProductos] = useState<Producto[]>([]);
   const [tallas, setTallas] = useState<Talla[]>([]);
   const [qCliente, setQCliente] = useState("");
@@ -85,11 +107,46 @@ export default function NuevoPedidoPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [conflictos, setConflictos] = useState<ConflictoStock[] | null>(null);
+
+  const recuadroRef = useRef<HTMLDivElement>(null);
+  const [btnTam, setBtnTam] = useState<number | null>(null);
+
+  useEffect(() => {
+    const el = recuadroRef.current;
+    if (!el) return;
+    const medir = () => {
+      setBtnTam(window.innerWidth >= 768 ? el.offsetHeight : null);
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    window.addEventListener("resize", medir);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", medir);
+    };
+  }, []);
 
   useEffect(() => {
     api<{ productos: Producto[] }>("/api/productos").then(({ data }) =>
       setProductos(data?.productos ?? [])
     );
+  }, []);
+
+  useEffect(() => {
+    api<{ user: { id: string; nombre: string } }>("/api/auth/me").then(({ data }) => {
+      const u = data?.user;
+      if (!u) return;
+      setMiId(u.id);
+      setMiNombre(u.nombre);
+      setVendedora1(u.id);
+      setVendedora2(u.id);
+      setVendedora3(u.id);
+    });
+    api<{ vendedoras: { id: string; nombre: string }[] }>("/api/vendedoras").then(({ data }) => {
+      setVendedoras(data?.vendedoras ?? []);
+    });
   }, []);
 
   // Sugerencias de cliente mientras se escribe
@@ -124,8 +181,11 @@ export default function NuevoPedidoPage() {
   const fechaPasada = fechaEntrega ? fechaEntrega < hoyISO : false;
 
   const tallaSel = tallas.find((t) => t.id === selTalla);
-  const disponible = tallaSel?.cantidad ?? 0;
+
+  // Las reglas usan el stock de ventas (almacén − comprometidas en pedidos).
+  const disponible = tallaSel?.cantidad_ventas ?? 0;
   const cantidadExcede = selTalla ? Number(selCantidad) > disponible : false;
+  const tallasConStock = tallas.filter((t) => t.cantidad_ventas > 0);
 
   const filtradosProd = useMemo(() => {
     const q = prodQ.trim().toLowerCase();
@@ -134,6 +194,14 @@ export default function NuevoPedidoPage() {
       .filter((p) => p.nombre.toLowerCase().includes(q) || p.imei.toLowerCase().includes(q))
       .slice(0, 20);
   }, [prodQ, productos]);
+
+  const opcionesVendedoras = useMemo(() => {
+    const lista = [...vendedoras];
+    if (miId && !lista.some((v) => v.id === miId)) {
+      lista.unshift({ id: miId, nombre: miNombre || "Yo (creador del pedido)" });
+    }
+    return lista;
+  }, [vendedoras, miId, miNombre]);
 
   const montoLineas = lineas.reduce((acc, l) => acc + l.cantidad * l.precio_unitario, 0);
   const total = montoLineas + Number(costoEnvio || 0);
@@ -193,15 +261,24 @@ export default function NuevoPedidoPage() {
 
   async function guardar(confirmar: boolean) {
     setError(null);
-    if (!cliente) return setError("Selecciona un cliente");
-    if (!fechaEntrega) return setError("Indica la fecha de entrega");
     if (lineas.length === 0) return setError("Agrega al menos un producto");
+    if (confirmar && !cliente) return setError("Selecciona un cliente");
+    if (confirmar && !fechaEntrega) return setError("Indica la fecha de entrega");
     setLoading(true);
 
-    const { data: creado, error: err1 } = await api<{ pedido: any }>("/api/pedidos", {
+    // Batch único: el servidor relee el stock de ventas, valida todo el lote y
+    // rechaza con { conflictos } si algo dejaría el stock en negativo.
+    const { data, error: err } = await api<{
+      pedido?: any;
+      conflictos?: ConflictoStock[];
+    }>("/api/pedidos", {
       method: "POST",
       body: JSON.stringify({
-        cliente_id: cliente.id,
+        confirmar,
+        cliente_id: cliente?.id ?? null,
+        vendedora_1_id: vendedora1 || miId,
+        vendedora_contribuyente_id: vendedora2 || miId,
+        vendedora_contribuyente_2_id: vendedora3 || miId,
         fecha_entrega: fechaEntrega,
         tipo_pedido: tipoPedido,
         metodo_entrega: metodoEntrega,
@@ -224,19 +301,7 @@ export default function NuevoPedidoPage() {
         fecha_siguiente_pago: Number(partes) > 1 ? fechaPagoParte2 || null : null,
         observaciones: observaciones || null,
         regalo: false,
-      }),
-    });
-    if (err1 || !creado?.pedido) {
-      setError(err1 ?? "No se pudo crear el pedido");
-      setLoading(false);
-      return;
-    }
-    const pedidoId = creado.pedido.id;
-
-    for (const l of lineas) {
-      const { error: errDet } = await api(`/api/pedidos/${pedidoId}/detalles`, {
-        method: "POST",
-        body: JSON.stringify({
+        lineas: lineas.map((l) => ({
           producto_id: l.producto_id,
           talla_id: l.talla_id,
           cantidad: l.cantidad,
@@ -244,28 +309,20 @@ export default function NuevoPedidoPage() {
           genero: l.genero,
           entalle: l.entalle,
           es_extra_motorizado: l.es_extra_motorizado,
-        }),
-      });
-      if (errDet) {
-        setError(`Producto ${l.nombre}: ${errDet}`);
-        setLoading(false);
-        return;
-      }
-    }
-
-    if (confirmar) {
-      const { error: errConf } = await api(`/api/pedidos/${pedidoId}/confirmar`, {
-        method: "POST",
-      });
-      if (errConf) {
-        setError(errConf);
-        setLoading(false);
-        return;
-      }
-    }
+        })),
+      }),
+    });
 
     setLoading(false);
-    router.push(`/pedidos/${pedidoId}`);
+    if (err || !data?.pedido) {
+      if (data?.conflictos && data.conflictos.length > 0) {
+        setConflictos(data.conflictos);
+        return;
+      }
+      return setError(err ?? "No se pudo crear el pedido");
+    }
+
+    router.push(`/pedidos/${data.pedido.id}`);
     router.refresh();
   }
 
@@ -357,6 +414,27 @@ export default function NuevoPedidoPage() {
               )}
             </div>
           )}
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-5">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">Vendedoras</h2>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <Select label="Vendedora" value={vendedora1} onChange={(e) => setVendedora1(e.target.value)}>
+              {opcionesVendedoras.map((v) => (
+                <option key={v.id} value={v.id}>{v.nombre}</option>
+              ))}
+            </Select>
+            <Select label="Vendedora que colaboró 1" value={vendedora2} onChange={(e) => setVendedora2(e.target.value)}>
+              {opcionesVendedoras.map((v) => (
+                <option key={v.id} value={v.id}>{v.nombre}</option>
+              ))}
+            </Select>
+            <Select label="Vendedora que colaboró 2" value={vendedora3} onChange={(e) => setVendedora3(e.target.value)}>
+              {opcionesVendedoras.map((v) => (
+                <option key={v.id} value={v.id}>{v.nombre}</option>
+              ))}
+            </Select>
+          </div>
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-5">
@@ -485,7 +563,9 @@ export default function NuevoPedidoPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-5">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Productos</h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end">
+            <div ref={recuadroRef} className="flex-1 rounded-lg border border-blue-200 bg-blue-50 p-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
             <div className="relative md:col-span-2">
               <span className="mb-1 block font-medium text-slate-700">Producto</span>
               <input
@@ -531,12 +611,16 @@ export default function NuevoPedidoPage() {
               )}
             </div>
             <Select label="Talla" value={selTalla} onChange={(e) => { setSelTalla(e.target.value); setSelCantidad("1"); }}>
-              <option value="">Sin talla</option>
-              {tallas.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.nombre} ({t.cantidad})
-                </option>
-              ))}
+                <option value="">Sin talla</option>
+                {tallasConStock.length > 0 ? (
+                  tallasConStock.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nombre} ({t.cantidad_ventas})
+                    </option>
+                  ))
+                ) : (
+                  <option value="" disabled>Sin stock</option>
+                )}
             </Select>
             <div>
               <Input
@@ -565,30 +649,41 @@ export default function NuevoPedidoPage() {
               <option value="dama">Dama</option>
               <option value="caballero">Caballero</option>
             </Select>
-          </div>
-          <div className="mt-3">
-            <Button variant="secondary" onClick={agregarLinea} disabled={!selProducto}>
-              + Agregar producto
+            </div>
+            </div>
+            <Button
+              onClick={agregarLinea}
+              disabled={!selProducto}
+              className="flex w-full shrink-0 flex-col rounded-xl"
+              style={btnTam ? { width: btnTam, height: btnTam } : undefined}
+            >
+              <span className="text-3xl leading-none">+</span>
+              <span className="mt-1 text-center text-sm leading-tight">Añadir este producto</span>
             </Button>
           </div>
 
           {lineas.length > 0 && (
             <div className="mt-4 space-y-2">
-              {lineas.map((l, i) => (
-                <div key={i} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                  <div>
-                    <p className="font-medium">
-                      {l.nombre} <span className="text-xs text-slate-400">({l.imei})</span>
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      {l.cantidad} x S/ {l.precio_unitario.toFixed(2)} = S/ {(l.cantidad * l.precio_unitario).toFixed(2)}
-                    </p>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Productos agregados ({lineas.length})
+              </h3>
+              <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
+                {lineas.map((l, i) => (
+                  <div key={i} className="flex items-center justify-between bg-slate-50 px-3 py-2 text-sm">
+                    <div>
+                      <p className="font-medium">
+                        {l.nombre} <span className="text-xs text-slate-400">({l.imei})</span>
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {l.cantidad} x S/ {l.precio_unitario.toFixed(2)} = S/ {(l.cantidad * l.precio_unitario).toFixed(2)}
+                      </p>
+                    </div>
+                    <button onClick={() => setLineas((prev) => prev.filter((_, j) => j !== i))} className="text-red-500">
+                      Quitar
+                    </button>
                   </div>
-                  <button onClick={() => setLineas((prev) => prev.filter((_, j) => j !== i))} className="text-red-500">
-                    Quitar
-                  </button>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
         </section>
@@ -606,10 +701,10 @@ export default function NuevoPedidoPage() {
             </div>
             <div className="flex gap-2">
               <Button variant="secondary" disabled={loading} onClick={() => guardar(false)}>
-                Guardar
+                Terminar después
               </Button>
               <Button disabled={loading} onClick={() => guardar(true)}>
-                {loading ? "Procesando..." : "Confirmar pedido"}
+                {loading ? "Procesando..." : "Guardar Pedido"}
               </Button>
             </div>
           </div>
@@ -626,6 +721,51 @@ export default function NuevoPedidoPage() {
             setCliente(c);
           }}
         />
+      )}
+
+      {conflictos && (
+        <Modal
+          open
+          onClose={() => setConflictos(null)}
+          title="Stock insuficiente"
+          footer={
+            <Button variant="secondary" onClick={() => setConflictos(null)}>
+              Entendido
+            </Button>
+          }
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Estos productos ya no tienen stock de ventas disponible. Es posible que otra
+              vendedora los haya reservado mientras creabas el pedido.
+            </p>
+            {conflictos.map((c) => (
+              <div
+                key={`${c.producto_id}|${c.talla_id}`}
+                className="rounded-lg border border-red-200 bg-red-50 p-3"
+              >
+                <p className="text-sm font-semibold text-red-700">
+                  {c.producto_nombre} ({c.producto_imei}) — Talla {c.talla_nombre || "Sin talla"}
+                </p>
+                <p className="mt-1 text-xs text-red-600">
+                  Quieres {c.cantidad}, pero solo hay {c.disponible} disponible.
+                </p>
+                {c.pedidos.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-red-700">Ya reservado por:</p>
+                    <ul className="mt-1 space-y-1 text-xs text-slate-600">
+                      {c.pedidos.map((p, i) => (
+                        <li key={i}>
+                          {p.codigo} ({p.estado}) — {p.cliente ?? "Sin cliente"}: {p.cantidad} und.
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Modal>
       )}
     </div>
   );

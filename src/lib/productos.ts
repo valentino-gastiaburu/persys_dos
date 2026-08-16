@@ -107,22 +107,73 @@ export async function registrarHistorialProducto(params: {
   await supabase.from("historial_productos").insert(row);
 }
 
+// conteo por (producto_id|talla_id) de productos_unicos existentes (excluye eliminados)
+async function getConteoPorTalla() {
+  const supabase = getSupabase();
+  const { data: unidades } = await supabase
+    .from("productos_unicos")
+    .select("producto_id, talla_id")
+    .neq("estado", "eliminado");
+  const conteo: Record<string, number> = {};
+  for (const u of unidades ?? []) {
+    if (!u.talla_id) continue;
+    const k = `${u.producto_id}|${u.talla_id}`;
+    conteo[k] = (conteo[k] ?? 0) + 1;
+  }
+  return conteo;
+}
+
+// comprometido por (producto_id|talla_id): cantidad en pedidos realizados.
+// Reservan stock los pedidos en estados activos (solicitado, confirmado, alistado,
+// enviado, entregado, cerrado, esperando_devolucion, esperando_cambio);
+// NO reservan los borradores ni los cancelados/devueltos.
+async function getComprometidasPorTalla() {
+  const supabase = getSupabase();
+  const { data: pedidos } = await supabase
+    .from("pedidos")
+    .select("id")
+    .not("estado", "in", "(borrador,cancelado,devuelto)");
+  const ids = (pedidos ?? []).map((p: any) => p.id);
+  const comprometidas: Record<string, number> = {};
+  if (ids.length === 0) return comprometidas;
+  const { data: detalles } = await supabase
+    .from("detalles_pedido")
+    .select("producto_id, talla_id, cantidad")
+    .eq("estado", "activo")
+    .in("pedido_id", ids);
+  for (const d of detalles ?? []) {
+    if (!d.talla_id) continue;
+    const k = `${d.producto_id}|${d.talla_id}`;
+    comprometidas[k] = (comprometidas[k] ?? 0) + Number(d.cantidad);
+  }
+  return comprometidas;
+}
+
+// Stock de ventas por (producto_id|talla_id): conteo − comprometidas.
+// Es la regla única que usan las validaciones de pedidos (no stock de almacén).
+export async function getStockVentasPorTalla() {
+  const [conteo, comprometidas] = await Promise.all([
+    getConteoPorTalla(),
+    getComprometidasPorTalla(),
+  ]);
+  const stock: Record<string, number> = {};
+  const keys = new Set([...Object.keys(conteo), ...Object.keys(comprometidas)]);
+  for (const k of keys) stock[k] = (conteo[k] ?? 0) - (comprometidas[k] ?? 0);
+  return stock;
+}
+
 // Devuelve productos con su stock por talla.
-// El stock es el conteo de productos_unicos existentes por talla (excluye eliminados).
+// stock = conteo de productos_unicos existentes por talla (excluye eliminados).
+// stock_ventas = stock almacén − unidades comprometidas en pedidos realizados
+// (NO reservan borrador, cancelado ni devuelto).
 export async function listarProductos() {
   const supabase = getSupabase();
-  const [{ data: productos }, { data: unidades }, { data: tallasRows }] =
+  const [{ data: productos }, { data: tallasRows }, stockVentas, conteo] =
     await Promise.all([
-      supabase
-        .from("productos")
-        .select("*")
-        .neq("estado", "eliminado")
-        .order("nombre"),
-      supabase
-        .from("productos_unicos")
-        .select("producto_id, talla_id")
-        .neq("estado", "eliminado"),
+      supabase.from("productos").select("*").neq("estado", "eliminado").order("nombre"),
       supabase.from("tallas").select("id, tipo, nombre"),
+      getStockVentasPorTalla(),
+      getConteoPorTalla(),
     ]);
 
   const tallaTipo: Record<string, string> = {};
@@ -132,20 +183,129 @@ export async function listarProductos() {
     tallaNombre[t.id] = t.nombre;
   }
 
-  // conteos[productoId][tipo][nombreTalla] = cantidad
-  const conteos: Record<string, Record<string, Record<string, number>>> = {};
-  for (const u of unidades ?? []) {
-    const tipo = tallaTipo[u.talla_id];
-    const nombre = tallaNombre[u.talla_id];
+  const nombreDe = (k: string) => {
+    const [, tallaId] = k.split("|");
+    return { tipo: tallaTipo[tallaId], nombre: tallaNombre[tallaId] };
+  };
+
+  // stock[productoId][tipo][nombreTalla] = cantidad
+  const stock: Record<string, Record<string, Record<string, number>>> = {};
+  for (const [k, n] of Object.entries(conteo)) {
+    const { tipo, nombre } = nombreDe(k);
     if (!tipo || !nombre) continue;
-    conteos[u.producto_id] = conteos[u.producto_id] ?? {};
-    conteos[u.producto_id][tipo] = conteos[u.producto_id][tipo] ?? {};
-    conteos[u.producto_id][tipo][nombre] =
-      (conteos[u.producto_id][tipo][nombre] ?? 0) + 1;
+    const [productoId] = k.split("|");
+    stock[productoId] = stock[productoId] ?? {};
+    stock[productoId][tipo] = stock[productoId][tipo] ?? {};
+    stock[productoId][tipo][nombre] = n;
+  }
+
+  // stockVentas[productoId][tipo][nombreTalla] = conteo − comprometidas
+  const stockVentasNombres: Record<string, Record<string, Record<string, number>>> = {};
+  for (const [k, n] of Object.entries(stockVentas)) {
+    const { tipo, nombre } = nombreDe(k);
+    if (!tipo || !nombre) continue;
+    const [productoId] = k.split("|");
+    stockVentasNombres[productoId] = stockVentasNombres[productoId] ?? {};
+    stockVentasNombres[productoId][tipo] = stockVentasNombres[productoId][tipo] ?? {};
+    stockVentasNombres[productoId][tipo][nombre] = n;
   }
 
   return (productos ?? []).map((p: any) => ({
     ...p,
-    stock: conteos[p.id] ?? {},
+    stock: stock[p.id] ?? {},
+    stock_ventas: stockVentasNombres[p.id] ?? {},
   }));
+}
+
+export interface LineaStock {
+  producto_id: string;
+  talla_id: string | null;
+  cantidad: number;
+}
+
+export interface ConflictoStock {
+  producto_id: string;
+  talla_id: string | null;
+  producto_imei: string | null;
+  producto_nombre: string | null;
+  talla_nombre: string | null;
+  cantidad: number;
+  disponible: number;
+  pedidos: {
+    codigo: string | null;
+    estado: string;
+    cliente: string | null;
+    cantidad: number;
+  }[];
+}
+
+// Valida un lote de líneas contra el stock de ventas actual (relee la BD).
+// Si algo quedara negativo, devuelve los conflictos con los pedidos que ya
+// reservaron esa talla (para mostrarlos en el modal).
+export async function validarStockLineas(
+  lineas: LineaStock[]
+): Promise<{ conflictos: ConflictoStock[]; stockVentas: Record<string, number> }> {
+  const supabase = getSupabase();
+  const stockVentas = await getStockVentasPorTalla();
+
+  const necesitado: Record<string, number> = {};
+  for (const l of lineas) {
+    if (!l.talla_id) continue;
+    const k = `${l.producto_id}|${l.talla_id}`;
+    necesitado[k] = (necesitado[k] ?? 0) + Number(l.cantidad || 0);
+  }
+
+  const conflictos: ConflictoStock[] = [];
+  for (const [k, requerido] of Object.entries(necesitado)) {
+    const disponible = (stockVentas[k] ?? 0) - requerido;
+    if (disponible >= 0) continue;
+
+    const [productoId, tallaId] = k.split("|");
+    const [{ data: producto }, { data: talla }, { data: pedidos }] = await Promise.all([
+      supabase.from("productos").select("imei, nombre").eq("id", productoId).maybeSingle(),
+      supabase.from("tallas").select("nombre").eq("id", tallaId).maybeSingle(),
+      supabase
+        .from("pedidos")
+        .select("id, codigo, estado, clientes(nombre, apellido)")
+        .not("estado", "in", "(borrador,cancelado,devuelto)"),
+    ]);
+    const ids = (pedidos ?? []).map((p: any) => p.id);
+    const cantidades: Record<string, number> = {};
+    if (ids.length > 0) {
+      const { data: detalles } = await supabase
+        .from("detalles_pedido")
+        .select("pedido_id, cantidad")
+        .eq("estado", "activo")
+        .eq("producto_id", productoId)
+        .eq("talla_id", tallaId)
+        .in("pedido_id", ids);
+      for (const d of detalles ?? []) {
+        cantidades[d.pedido_id] = (cantidades[d.pedido_id] ?? 0) + Number(d.cantidad);
+      }
+    }
+
+    const reservantes = (pedidos ?? [])
+      .filter((p: any) => cantidades[p.id])
+      .map((p: any) => ({
+        codigo: p.codigo,
+        estado: p.estado,
+        cliente: p.clientes
+          ? `${p.clientes.nombre}${p.clientes.apellido ? " " + p.clientes.apellido : ""}`
+          : null,
+        cantidad: cantidades[p.id],
+      }));
+
+    conflictos.push({
+      producto_id: productoId,
+      talla_id: tallaId,
+      producto_imei: producto?.imei ?? null,
+      producto_nombre: producto?.nombre ?? null,
+      talla_nombre: talla?.nombre ?? null,
+      cantidad: requerido,
+      disponible: stockVentas[k] ?? 0,
+      pedidos: reservantes,
+    });
+  }
+
+  return { conflictos, stockVentas };
 }

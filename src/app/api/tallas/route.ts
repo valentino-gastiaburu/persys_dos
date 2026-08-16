@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { getStockVentasPorTalla } from "@/lib/productos";
 
 // GET /api/tallas?producto_id=<id> — tallas de un producto
 export async function GET(request: NextRequest) {
@@ -12,28 +13,34 @@ export async function GET(request: NextRequest) {
   const productoId = request.nextUrl.searchParams.get("producto_id");
 
   if (productoId) {
-    const [{ data, error: err }, { data: unidades, error: errU }] = await Promise.all([
-      supabase
-        .from("producto_tallas")
-        .select("tallas(id, nombre, tipo)")
-        .eq("producto_id", productoId)
-        .order("orden", { foreignTable: "tallas" }),
-      supabase
-        .from("productos_unicos")
-        .select("talla_id")
-        .eq("producto_id", productoId)
-        .neq("estado", "eliminado"),
-    ]);
+    const [{ data, error: err }, { data: unidades, error: errU }, stockVentas] =
+      await Promise.all([
+        supabase
+          .from("producto_tallas")
+          .select("tallas(id, nombre, tipo)")
+          .eq("producto_id", productoId)
+          .order("orden", { foreignTable: "tallas" }),
+        supabase
+          .from("productos_unicos")
+          .select("talla_id")
+          .eq("producto_id", productoId)
+          .neq("estado", "eliminado"),
+        getStockVentasPorTalla(),
+      ]);
     if (err || errU) return Response.json({ error: "Error de base de datos" }, { status: 500 });
 
     const conteo: Record<string, number> = {};
     for (const u of unidades ?? []) conteo[u.talla_id] = (conteo[u.talla_id] ?? 0) + 1;
 
     return Response.json({
-      tallas: (data ?? []).map((r: any) => ({
-        ...r.tallas,
-        cantidad: conteo[r.tallas?.id] ?? 0,
-      })),
+      tallas: (data ?? []).map((r: any) => {
+        const tallaId = r.tallas?.id;
+        return {
+          ...r.tallas,
+          cantidad: conteo[tallaId] ?? 0,
+          cantidad_ventas: stockVentas[`${productoId}|${tallaId}`] ?? 0,
+        };
+      }),
     });
   }
 

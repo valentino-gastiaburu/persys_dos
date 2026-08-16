@@ -34,6 +34,11 @@ const ESTADO_LABEL: Record<string, string> = {
   devuelto: "Devuelto",
 };
 
+const TRANSICIONES: Record<string, { atras: string[]; adelante: string[] }> = {
+  solicitado: { atras: [], adelante: ["confirmado", "cancelado"] },
+  confirmado: { atras: ["solicitado"], adelante: ["cancelado"] },
+};
+
 type PedidoRow = {
   id: string;
   codigo: string;
@@ -115,6 +120,7 @@ export default function PedidosPage() {
         />
         <Select value={estado} onChange={(e) => setEstado(e.target.value)} className="max-w-[180px]">
           <option value="">Todos los estados</option>
+          <option value="borrador">Borrador</option>
           <option value="solicitado">Solicitado</option>
           <option value="confirmado">Confirmado</option>
           <option value="alistado">Alistado</option>
@@ -141,7 +147,6 @@ export default function PedidosPage() {
                 <th className="px-4 py-2">Fecha entrega</th>
                 <th className="px-4 py-2">Pedido</th>
                 <th className="px-4 py-2">Cliente</th>
-                <th className="px-4 py-2">N°</th>
                 <th className="px-4 py-2">Resumen</th>
                 <th className="px-4 py-2">Vendedora</th>
                 <th className="px-4 py-2 text-right">Total</th>
@@ -153,7 +158,7 @@ export default function PedidosPage() {
             <tbody>
               {pedidos.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-400">
                     No hay pedidos.
                   </td>
                 </tr>
@@ -173,10 +178,18 @@ export default function PedidosPage() {
                     {p.codigo}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 font-medium text-slate-800">
-                    {p.cliente_nombre ?? "Sin cliente"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-2 font-mono text-slate-600">
-                    {p.cliente_telefono ?? "—"}
+                    {p.cliente_telefono ? (
+                      <>
+                        {p.cliente_telefono}
+                        {p.cliente_nombre && (
+                          <span className="ml-1 text-xs font-normal text-slate-400">
+                            ({p.cliente_nombre})
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      p.cliente_nombre ?? "Sin cliente"
+                    )}
                   </td>
                   <td className="max-w-[240px] truncate px-4 py-2 text-slate-600">
                     {p.resumen_productos ?? "—"}
@@ -204,44 +217,7 @@ export default function PedidosPage() {
                     {p.partes_a_pagar ?? 1}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2">
-                    <div className="flex items-center gap-2">
-                      <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
-                        {ESTADO_LABEL[p.estado] ?? p.estado}
-                      </Badge>
-                      {p.estado === "solicitado" && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            confirmar(p);
-                          }}
-                          className="rounded-md border border-blue-600 px-2 py-0.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
-                        >
-                          Confirmar
-                        </button>
-                      )}
-                      {["solicitado", "confirmado"].includes(p.estado) && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            cambiarEstado(p, "cancelado");
-                          }}
-                          className="rounded-md border border-red-300 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50"
-                        >
-                          Cancelar
-                        </button>
-                      )}
-                      {p.estado === "confirmado" && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            cambiarEstado(p, "solicitado");
-                          }}
-                          className="rounded-md border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                        >
-                          Volver a Solicitar
-                        </button>
-                      )}
-                    </div>
+                    <EstadoCell p={p} onConfirmar={confirmar} onCambiarEstado={cambiarEstado} />
                   </td>
                 </tr>
               ))}
@@ -250,5 +226,153 @@ export default function PedidosPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function opcionButton(
+  destino: string,
+  esCancelado: boolean,
+  setAbierto: React.Dispatch<React.SetStateAction<boolean>>,
+  p: PedidoRow,
+  onConfirmar: (p: PedidoRow) => void,
+  onCambiarEstado: (p: PedidoRow, nuevoEstado: string) => void
+) {
+  return (
+    <button
+      key={destino}
+      onClick={(e) => {
+        e.stopPropagation();
+        setAbierto(false);
+        if (destino === "confirmado") onConfirmar(p);
+        else onCambiarEstado(p, destino);
+      }}
+      className={`flex w-full items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50 ${
+        esCancelado ? "text-red-600" : "text-blue-700"
+      }`}
+    >
+      <span
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+          esCancelado ? "bg-red-500" : "bg-blue-500"
+        }`}
+      />
+      {ESTADO_LABEL[destino] ?? destino}
+    </button>
+  );
+}
+
+function EstadoCell({
+  p,
+  onConfirmar,
+  onCambiarEstado,
+}: {
+  p: PedidoRow;
+  onConfirmar: (p: PedidoRow) => void;
+  onCambiarEstado: (p: PedidoRow, nuevoEstado: string) => void;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const trans = TRANSICIONES[p.estado] ?? { atras: [], adelante: [] };
+  const clickeable = trans.atras.length + trans.adelante.length > 0;
+
+  if (!clickeable) {
+    return (
+      <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
+        {ESTADO_LABEL[p.estado] ?? p.estado}
+      </Badge>
+    );
+  }
+
+  function abrir(e: React.MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    const right = window.innerWidth - r.right;
+    let top = r.bottom + 4;
+    if (top + 140 > window.innerHeight - 8) top = r.top - 144;
+    setPos({ top: Math.max(8, top), right: Math.max(8, right) });
+    setAbierto((v) => !v);
+  }
+
+  return (
+    <>
+      <button
+        onClick={abrir}
+        title="Cambiar estado"
+        className="flex items-center gap-1 rounded-lg hover:bg-slate-100"
+      >
+        <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
+          {ESTADO_LABEL[p.estado] ?? p.estado}
+        </Badge>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-3 w-3 text-slate-400"
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+
+      {abierto && pos && (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onClick={(e) => {
+              e.stopPropagation();
+              setAbierto(false);
+            }}
+          />
+          <div
+            className="fixed z-40 flex items-stretch gap-1.5 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+            style={{ top: pos.top, right: pos.right }}
+          >
+            {trans.atras.length > 0 && (
+              <div className="flex flex-col gap-1 rounded-lg bg-slate-50 p-1">
+                {trans.atras.map((d) =>
+                  opcionButton(d, d === "cancelado", setAbierto, p, onConfirmar, onCambiarEstado)
+                )}
+              </div>
+            )}
+            <div className="flex flex-col items-center justify-center gap-1 px-1 text-slate-400">
+              {trans.atras.length > 0 && (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-3 w-3"
+                >
+                  <path d="M19 12H5M11 18l-6-6 6-6" />
+                </svg>
+              )}
+              {trans.adelante.length > 0 && (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-3 w-3"
+                >
+                  <path d="M5 12h14M13 18l6-6-6-6" />
+                </svg>
+              )}
+            </div>
+            {trans.adelante.length > 0 && (
+              <div className="flex flex-col gap-1 rounded-lg bg-slate-50 p-1">
+                {trans.adelante.map((d) =>
+                  opcionButton(d, d === "cancelado", setAbierto, p, onConfirmar, onCambiarEstado)
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </>
   );
 }

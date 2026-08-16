@@ -1,25 +1,55 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { generarCodigoPedido } from "@/lib/pedidos";
+import { generarCodigoPedido, confirmarPedido } from "@/lib/pedidos";
+import { validarStockLineas } from "@/lib/productos";
 
-// POST /api/pedidos — crea un pedido en estado borrador
+// POST /api/pedidos — crea el pedido completo en un solo lote.
+// Body: campos del pedido + lineas[] + confirmar (boolean).
+// Valida el lote contra el stock de ventas (relee la BD): si algo quedara
+// negativo, no crea nada y responde { conflictos }.
+// El pedido nace como borrador; si confirmar=true se confirma en la misma llamada.
 export async function POST(request: NextRequest) {
   const { user, error } = await requireRoles(["vendedora", "agendadora", "controller", "admin"]);
   if (error) return error;
 
   const body = await request.json();
   const supabase = getSupabase();
+
+  const lineas: {
+    producto_id: string;
+    talla_id: string | null;
+    cantidad: number;
+    precio_unitario?: number;
+    entalle?: boolean;
+    talla_inicial?: string | null;
+    genero?: string;
+    es_extra_motorizado?: boolean;
+  }[] = body.lineas ?? [];
+  if (lineas.length === 0) {
+    return Response.json({ error: "El pedido no tiene productos" }, { status: 400 });
+  }
+
+  const { conflictos } = await validarStockLineas(lineas);
+  if (conflictos.length > 0) {
+    return Response.json(
+      { error: "Stock insuficiente para algunos productos", conflictos },
+      { status: 409 }
+    );
+  }
+
   const codigo = await generarCodigoPedido();
 
   const { data: pedido, error: err } = await supabase
     .from("pedidos")
     .insert({
       codigo,
-      estado: "solicitado",
+      estado: "borrador",
       creado_por: user.id,
       vendedora_1_id: body.vendedora_1_id || user.id,
       vendedora_contribuyente_id: body.vendedora_contribuyente_id || user.id,
+      vendedora_contribuyente_2_id: body.vendedora_contribuyente_2_id || user.id,
+      agendadora_id: body.agendadora_id || user.id,
       cliente_id: body.cliente_id || null,
       fecha_entrega: body.fecha_entrega || null,
       tipo_pedido: body.tipo_pedido || null,
@@ -42,7 +72,47 @@ export async function POST(request: NextRequest) {
   if (err || !pedido) {
     return Response.json({ error: "No se pudo crear el pedido" }, { status: 500 });
   }
-  return Response.json({ pedido }, { status: 201 });
+
+  // Insertar todas las líneas en un solo batch.
+  const detalles = lineas.map((l) => {
+    const precioUnitario = Number(l.precio_unitario ?? 0);
+    return {
+      pedido_id: pedido.id,
+      producto_id: l.producto_id,
+      talla_id: l.talla_id || null,
+      entalle: Boolean(l.entalle),
+      talla_inicial: l.talla_inicial || null,
+      cantidad: Number(l.cantidad),
+      precio_unitario: precioUnitario,
+      subtotal: Number(l.cantidad) * precioUnitario,
+      genero: l.genero || "dama",
+      es_extra_motorizado: Boolean(l.es_extra_motorizado),
+      anadido_por: user.id,
+    };
+  });
+
+  const { error: errDetalles } = await supabase.from("detalles_pedido").insert(detalles);
+  if (errDetalles) {
+    await supabase.from("pedidos").delete().eq("id", pedido.id);
+    return Response.json({ error: "No se pudieron registrar los productos" }, { status: 500 });
+  }
+
+  // Si se pidió confirmar, confirmar en la misma llamada (crea el viaje).
+  if (body.confirmar) {
+    const { pedido: confirmado, viaje, error: errConfirmar } = await confirmarPedido(pedido.id, user.id);
+    if (errConfirmar || !confirmado) {
+      // Todo-o-nada: revertir el pedido recién creado.
+      await supabase.from("detalles_pedido").delete().eq("pedido_id", pedido.id);
+      await supabase.from("pedidos").delete().eq("id", pedido.id);
+      return Response.json(
+        { error: errConfirmar ?? "No se pudo confirmar el pedido" },
+        { status: 400 }
+      );
+    }
+    return Response.json({ pedido: confirmado, confirmado: true, viaje }, { status: 201 });
+  }
+
+  return Response.json({ pedido, confirmado: false }, { status: 201 });
 }
 
 // GET /api/pedidos?estado=&q=&pendientes=1&ocultos=0

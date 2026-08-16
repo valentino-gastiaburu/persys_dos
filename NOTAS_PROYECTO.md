@@ -43,6 +43,55 @@ configuración.
    Lista de pedidos en tabla (fecha entrega, código, cliente, n°, resumen, vendedora,
    total, deuda, estado).
 10. `Input` de `components/ui.tsx` acepta `danger` (borde/focus rojo) para estados de error.
+11. **Equipo del pedido** (15/ago/2026): al crear pedido se piden **Vendedora**, **Vendedora que
+    colaboró 1** y **Vendedora que colaboró 2** (por defecto = quien crea el pedido; se puede
+    cambiar a cualquier vendedora activa). La **Agendadora** no se muestra en el formulario de
+    creación; queda guardada (por defecto = quien crea) y solo se ve en el **detalle del pedido**.
+    Se agregaron columnas `vendedora_contribuyente_2_id` y `agendadora_id` (migración
+    `supabase/05_pedidos_equipo.sql`) y endpoints `/api/auth/me` y `/api/vendedoras`.
+12. **Stock ventas** (15/ago/2026): en Productos → Lista hay un toggle **"Stock almacén" /
+    "Stock ventas"**. El stock ventas (comercial) = unidades por talla − las comprometidas
+    en **pedidos realizados**. Reservan stock los estados activos (`solicitado`,
+    `confirmado`, `alistado`, `enviado`, `entregado`, `cerrado`, `esperando_devolucion`,
+    `esperando_cambio`); **NO reservan** `borrador`, `cancelado` ni `devuelto`.
+    Se calcula en `getStockVentasPorTalla` (`src/lib/productos.ts`) y se entrega como
+    `stock_ventas` en `GET /api/productos` y como `cantidad_ventas` en `GET /api/tallas`.
+    En la vista ventas el número sale **azul** si hay disponible, **gris** si es 0 y
+    **rojo** si es negativo (se vendió más de lo que hay).
+    **Regla de negocio:** TODAS las validaciones de pedidos usan el stock de ventas, no el
+    de almacén: el select de tallas del pedido (`nuevo` y el modal de editar) solo ofrece
+    tallas con disponible > 0, y `POST/PATCH .../detalles` validan contra
+    `getStockVentasPorTalla`.
+    **Ojo:** la vista SQL `v_stock_comercial` (reserva solo solicitado/confirmado y parte de
+    `en_almacen`) NO se usa; la regla única de stock ventas vive en JS
+    (`getStockVentasPorTalla` en `src/lib/productos.ts`). No hay vista ni función SQL de stock
+    (se descartó la migración `06_stock_ventas.sql` por decisión del usuario).
+13. **Batch de pedido + validación de stock en el click** (16/ago/2026): al dar click en
+    "Guardar Pedido" o "Terminar después" se manda **todo en un solo request**
+    (`POST /api/pedidos`): datos del pedido + `lineas[]` + flag `confirmar`. El servidor
+    **relee la BD en ese momento** (`validarStockLineas` en `lib/productos.ts`) y valida el
+    lote completo por resta contra el stock de ventas: si alguna talla quedaría en
+    **negativo**, no se crea nada y se responde `{ conflictos }` (producto/talla + pedidos
+    que ya lo reservaron: código, estado, cliente, cantidad) → el cliente muestra un modal.
+    Si pasa, se crea el pedido en **`borrador`** con todos sus detalles de una vez; si
+    `confirmar=true` se confirma en la misma llamada (estado `confirmado` + viaje; lógica
+    compartida `confirmarPedido` en `lib/pedidos.ts`) y, si la confirmación falla, se borra
+    el pedido (todo-o-nada). **Decisión del usuario:** concurrencia solo en JS, sin función
+    ni vista SQL (se acepta una ventana mínima de carrera de milisegundos). Por eso se
+    descartó el RPC `agregar_detalle_pedido` (migración `06`) y el endpoint
+    `POST /api/pedidos/validar` (su lógica se absorbió en el batch).
+14. **Modal "Editar productos" en lote** (16/ago/2026): agregar/editar/quitar dentro del
+    modal es **solo local** (nada toca la BD al instante). El disponible de cada talla se
+    calcula en cliente: `cantidad_ventas + liberadas pendientes − agregadas pendientes`
+    (`cantidad_ventas` ya excluye las líneas del propio pedido). Todo se aplica al presionar
+    **"Listo"** (DELETEs → PATCHs → POSTs, en ese orden); si algo falla, el modal queda
+    abierto con el error y no se cierra. También se valida localmente que ningún
+    (producto,talla) quede negativo antes de aplicar.
+15. **"Terminar después" → pedido `borrador`** (16/ago/2026): crea el pedido en **borrador**
+    (no reserva stock, no exige cliente/fecha). "Guardar Pedido" → crea y confirma en un
+    solo paso (exige cliente + fecha de entrega). Corrige la inconsistencia pre-existente:
+    el POST insertaba `solicitado` siempre. La lista de pedidos ahora filtra por
+    **Borrador** (badge gris) y el detalle de un borrador permite "Confirmar pedido".
 
 ## Preguntas respondidas en el camino (resumen técnico)
 
@@ -77,9 +126,13 @@ configuración.
 2. `supabase/02_schema.sql` → schema correcto + seeds (tallas, config, admin) + RLS + trigger.
 3. `supabase/03_tandas.sql` → tabla `tandas` + `productos_unicos.tanda_id` (para "Añadir stock").
 4. `supabase/04_tallas.sql` → agrega `AB` y `ABC` al enum `tipo_talla` (para multi-talla).
+5. `supabase/05_pedidos_equipo.sql` → agrega `pedidos.vendedora_contribuyente_2_id` y
+   `pedidos.agendadora_id` (para el equipo de vendedoras del pedido).
 
-Para una BD nueva: **01 → 02 → 03 → 04**. Para la BD existente: basta correr **03 y 04**
-(aditivas e idempotentes; no tocan datos).
+Para una BD nueva: **01 → 02 → 03 → 04 → 05**. Para la BD existente: basta correr
+**03, 04 y 05** (aditivas e idempotentes; no tocan datos).
+(La migración `06_stock_ventas.sql` se creó y luego **se eliminó**: la regla de stock ventas
+es 100% JS, `getStockVentasPorTalla`, sin vista ni función SQL.)
 
 ## Smoke test E2E (validado OK contra la BD real)
 
@@ -113,9 +166,11 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 
 ## Flujo de estados del pedido
 
-- **Nace como `solicitado`** al crearse (POST /api/pedidos). Ya no nace como borrador.
+- **Nace como `borrador`** con "Terminar después" (POST /api/pedidos con `confirmar=false`) o
+  como `confirmado` con "Guardar Pedido" (`confirmar=true`, crea viaje + resumen + total +
+  primer pago en la misma llamada).
 - Transiciones **manuales** (tabla de pedidos y detalle, vía `POST /api/pedidos/[id]/estado`):
-  - `solicitado` → `confirmado` (botón Confirmar, usa `/confirmar`), `cancelado`
+  - `borrador`/`solicitado` → `confirmado` (botón Confirmar, usa `/confirmar`), `cancelado`
   - `confirmado` → `solicitado` (Volver a Solicitar), `cancelado`
 - Transición **automática**: `confirmado` → `alistado` cuando su viaje de entrega pasa a
   `alistado` (`syncEstadoPedidoPorViajes` en `lib/pedidos.ts`). Luego `enviado`/`entregado`
@@ -128,8 +183,9 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 
 ## Pendientes / notas
 
-- **Ejecutar en Supabase SQL Editor:** `supabase/03_tandas.sql` y `supabase/04_tallas.sql`
-  (sin correrlos, "Añadir stock" no funciona y no se puede elegir AB/ABC).
+- Todas las migraciones SQL (`03_tandas`, `04_tallas`, `05_pedidos_equipo`) **ya están
+  corriendo en Supabase** (el usuario las corrió el 16/ago/2026). "Añadir stock", tallas
+  AB/ABC y el equipo de vendedoras del pedido ya funcionan.
 - El smoke test dejó **datos de prueba** en la BD (productos/clientes/pedidos con "SMOKE").
   Preguntar al usuario si limpiarlos.
 - La ruta `detalles/route.ts` devuelve el mensaje de Postgres en errores (útil para debug;

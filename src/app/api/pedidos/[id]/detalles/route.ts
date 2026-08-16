@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 import { calcularTotal } from "@/lib/pedidos";
+import { getStockVentasPorTalla } from "@/lib/productos";
 
 // POST /api/pedidos/[id]/detalles — agrega un detalle al pedido (borrador)
 export async function POST(
@@ -17,8 +18,9 @@ export async function POST(
 
   const { data: pedido } = await supabase.from("pedidos").select("id, estado").eq("id", id).single();
   if (!pedido) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
-  if (pedido.estado !== "borrador") {
-    return Response.json({ error: "El pedido ya no está en creación" }, { status: 400 });
+  const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
+  if (!EDITABLES.includes(pedido.estado)) {
+    return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
   }
 
   const productoId = body.producto_id;
@@ -32,15 +34,9 @@ export async function POST(
   }
   if (precioUnitario < 0) return Response.json({ error: "Precio inválido" }, { status: 400 });
 
-  // Verificar stock comercial disponible (almacén - reservado)
-  const { data: stock } = await supabase
-    .from("v_stock_comercial")
-    .select("stock_comercial")
-    .eq("producto_id", productoId)
-    .eq("talla_id", tallaId)
-    .maybeSingle();
-
-  const disponible = Number(stock?.stock_comercial ?? 0);
+  // Verificar stock de ventas disponible (almacén − comprometidas en pedidos)
+  const stockVentas = await getStockVentasPorTalla();
+  const disponible = Number(stockVentas[`${productoId}|${tallaId}`] ?? 0);
   if (tallaId && disponible < cantidad) {
     return Response.json(
       { error: `Stock insuficiente: solo hay ${disponible} en esa talla` },

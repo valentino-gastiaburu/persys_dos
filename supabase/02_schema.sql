@@ -156,6 +156,8 @@ create table pedidos (
   creado_por                  uuid not null references usuarios(id),
   vendedora_1_id              uuid references usuarios(id),
   vendedora_contribuyente_id  uuid references usuarios(id),
+  vendedora_contribuyente_2_id uuid references usuarios(id),
+  agendadora_id               uuid references usuarios(id),
   cliente_id                  uuid references clientes(id),
   fecha_entrega               date,
   tipo_pedido                 tipo_pedido,

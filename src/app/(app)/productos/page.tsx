@@ -14,6 +14,7 @@ type Producto = {
   foto_url: string | null;
   estado: string;
   stock: Record<string, Record<string, number>>;
+  stock_ventas: Record<string, Record<string, number>>;
 };
 
 type Talla = { id: string; nombre: string; tipo: string };
@@ -62,6 +63,7 @@ function ListaProductos() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [tipoActivo, setTipoActivo] = useState<string>("A");
+  const [vista, setVista] = useState<"almacen" | "ventas">("almacen");
 
   const cargar = useCallback(async () => {
     const [p, t] = await Promise.all([
@@ -109,12 +111,34 @@ function ListaProductos() {
 
   return (
     <div>
-      <Input
-        placeholder="Buscar por nombre o IMEI..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="mb-4 max-w-sm"
-      />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Input
+          placeholder="Buscar por nombre o IMEI..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-sm"
+        />
+        <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+          {(
+            [
+              { id: "almacen", label: "Stock almacén" },
+              { id: "ventas", label: "Stock ventas" },
+            ] as const
+          ).map((v) => (
+            <button
+              key={v.id}
+              onClick={() => setVista(v.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                vista === v.id
+                  ? "bg-white text-blue-700 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <ErrorBanner message={error} />
 
       {loading ? (
@@ -143,13 +167,14 @@ function ListaProductos() {
               tipo={tipoActivo}
               rows={enTipo(tipoActivo)}
               cols={tallasPorTipo[tipoActivo] ?? []}
+              vista={vista}
             />
           </div>
 
           {/* Desktop: 3 tablas al lado */}
           <div className="hidden gap-4 xl:grid xl:grid-cols-3">
             {TIPOS_TABLA.map((tipo) => (
-              <TablaTipo key={tipo} tipo={tipo} rows={enTipo(tipo)} cols={tallasPorTipo[tipo] ?? []} />
+              <TablaTipo key={tipo} tipo={tipo} rows={enTipo(tipo)} cols={tallasPorTipo[tipo] ?? []} vista={vista} />
             ))}
           </div>
 
@@ -169,16 +194,21 @@ function TablaTipo({
   tipo,
   rows,
   cols,
+  vista,
 }: {
   tipo: string;
   rows: Producto[];
   cols: Talla[];
+  vista: "almacen" | "ventas";
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           Talla {tipo}
+          <span className="ml-1 font-normal normal-case text-slate-400">
+            {vista === "ventas" ? "· stock ventas" : "· stock almacén"}
+          </span>
         </span>
         <span className="text-xs text-slate-400">{rows.length}</span>
       </div>
@@ -210,15 +240,20 @@ function TablaTipo({
                 {p.imei}
               </td>
               {cols.map((c) => {
-                const n = p.stock?.[tipo]?.[c.nombre] ?? 0;
+                const fuente = vista === "ventas" ? p.stock_ventas : p.stock;
+                const n = fuente?.[tipo]?.[c.nombre] ?? 0;
+                const estilo =
+                  n > 0
+                    ? vista === "ventas"
+                      ? "bg-blue-50 text-blue-700"
+                      : "bg-emerald-50 text-emerald-700"
+                    : n < 0
+                      ? "bg-red-50 text-red-600"
+                      : "bg-slate-100 text-slate-400";
                 return (
                   <td key={c.id} className="px-1 py-2 text-center">
                     <span
-                      className={`inline-flex h-6 w-7 items-center justify-center rounded text-xs font-semibold ${
-                        n > 0
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-slate-100 text-slate-400"
-                      }`}
+                      className={`inline-flex h-6 w-7 items-center justify-center rounded text-xs font-semibold ${estilo}`}
                     >
                       {n}
                     </span>

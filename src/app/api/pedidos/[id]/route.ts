@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { getDetallesActivos } from "@/lib/pedidos";
+import { getDetallesActivos, calcularTotal } from "@/lib/pedidos";
 
 export async function GET(
   request: NextRequest,
@@ -20,7 +20,9 @@ export async function GET(
       *, clientes(*),
       creado_por_usuario:usuarios!pedidos_creado_por_fkey(id, nombre),
       vendedora:usuarios!pedidos_vendedora_1_id_fkey(id, nombre),
-      contribuyente:usuarios!pedidos_vendedora_contribuyente_id_fkey(id, nombre)
+      contribuyente:usuarios!pedidos_vendedora_contribuyente_id_fkey(id, nombre),
+      contribuyente2:usuarios!pedidos_vendedora_contribuyente_2_id_fkey(id, nombre),
+      agendadora:usuarios!pedidos_agendadora_id_fkey(id, nombre)
     `)
     .eq("id", id)
     .single();
@@ -74,11 +76,17 @@ export async function PATCH(
     .single();
   if (!actual) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
 
+  const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
+  if (!EDITABLES.includes(actual.estado)) {
+    return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
+  }
+
   const permitidos = [
     "cliente_id", "fecha_entrega", "tipo_pedido", "metodo_entrega", "empresa_envio",
     "direccion_entrega", "ciudad", "ubicacion_maps", "canal_venta", "costo_envio",
     "metodo_pago", "partes_a_pagar", "monto_primer_pago", "fecha_siguiente_pago",
     "observaciones", "regalo", "vendedora_1_id", "vendedora_contribuyente_id",
+    "vendedora_contribuyente_2_id", "agendadora_id",
   ];
   const updates: Record<string, any> = {};
   for (const c of permitidos) {
@@ -92,6 +100,19 @@ export async function PATCH(
   }
   if (body.regalo !== undefined) updates.regalo = Boolean(body.regalo);
   if (body.monto_total !== undefined) updates.monto_total = Number(body.monto_total);
+
+  // Si cambia el costo de envío, recalcular el monto_total (suma de subtotales + envío)
+  if (updates.costo_envio !== undefined && body.monto_total === undefined) {
+    const { data: detalles } = await supabase
+      .from("detalles_pedido")
+      .select("subtotal")
+      .eq("pedido_id", id)
+      .eq("estado", "activo");
+    updates.monto_total = calcularTotal(
+      (detalles ?? []).map((d: any) => ({ subtotal: Number(d.subtotal) })),
+      updates.costo_envio
+    );
+  }
 
   if (Object.keys(updates).length === 0) {
     return Response.json({ error: "Sin cambios" }, { status: 400 });

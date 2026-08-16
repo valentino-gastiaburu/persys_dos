@@ -43,7 +43,13 @@
    - **Método de pago** + **Partes a pagar** (ver §4.1).
    - Productos: búsqueda por nombre/IMEI, talla, cantidad (no puede exceder el
      stock disponible por talla), precio, género.
-   - Guardar → el pedido **nace como `solicitado`**. Puede confirmarse directo.
+    - **Equipo de vendedoras**: Vendedora, Vendedora que colaboró 1 y Vendedora que
+      colaboró 2 (por defecto = quien crea el pedido; cambiable a cualquier vendedora
+      activa). La **Agendadora** no se muestra al crear (por defecto = quien crea) y
+      solo se ve en el **detalle del pedido**.
+    - Guardar → **"Terminar después"** crea el pedido en **`borrador`** (no reserva
+      stock; puede seguir editándose y confirmarse después). **"Guardar Pedido"** crea
+      y confirma en un solo paso (pedido `confirmado` + viaje).
 3. **Confirmación** (vendedora): calcula total y resumen, crea el **viaje de
    entrega** (programado) y registra el **primer pago** si aplica.
 4. **Almacén** → Almacén / Viajes: abre el viaje y **escanea QRs** para alistar
@@ -68,7 +74,8 @@
 ## 3. Flujo de estados del pedido
 
 ```
-   crear (SIEMPRE nace aquí)
+   crear: "Terminar después" → BORRADOR (no reserva stock)
+          "Guardar Pedido" → CONFIRMADO directo (crea viaje)
         │
         ▼
    ┌────────────┐   Confirmar   ┌───────────────┐
@@ -93,7 +100,7 @@
 ```
 
 **Manuales** (tabla de pedidos y detalle, `POST /api/pedidos/[id]/estado`):
-- `solicitado` → `confirmado` (botón Confirmar, usa `/confirmar`), `cancelado`
+- `borrador`/`solicitado` → `confirmado` (botón Confirmar, usa `/confirmar`), `cancelado`
 - `confirmado` → `solicitado` (Volver a Solicitar), `cancelado`
 
 **Automáticas** (`syncEstadoPedidoPorViajes` en `lib/pedidos.ts`):
@@ -139,6 +146,30 @@
   `talla_original` y se registra en el historial.
 - **Stock por talla** = unidades existentes (excepto `eliminado`), no solo las
   `en_almacen`. El stock se carga con **tandas** (Productos Únicos → Añadir stock).
+- **Stock ventas (comercial)** = stock almacén por talla **menos** las unidades
+  comprometidas en **pedidos realizados**. Reservan stock los estados activos
+  (`solicitado`, `confirmado`, `alistado`, `enviado`, `entregado`, `cerrado`,
+  `esperando_devolucion`, `esperando_cambio`); **NO reservan** los borradores ni los
+  cancelados/devueltos. Se ve en Productos → Lista con el toggle "Stock almacén / Stock
+  ventas". Número azul = disponible, gris = 0, rojo = negativo (vendido de más).
+- **Regla de negocio:** TODAS las validaciones al crear/editar un pedido usan el
+  **stock de ventas**, no el de almacén: el select de tallas del pedido (nuevo pedido y
+  modal "Editar productos") solo ofrece tallas con disponible > 0, y el servidor valida
+  contra `getStockVentasPorTalla` al agregar un producto o subir su cantidad.
+- **Validación en el click al guardar (batch):** "Guardar Pedido" / "Terminar después"
+  envían el pedido completo en **un solo request** (`POST /api/pedidos` con `lineas[]`).
+  El servidor **relee la BD en ese momento**, valida todo el lote por resta contra el
+  stock de ventas y, si alguna talla quedaría en **negativo**, **no crea nada** y
+  responde los conflictos → modal con el producto/talla afectado y los pedidos que ya
+  lo reservaron (código, estado, cliente, cantidad). Si pasa, crea el pedido `borrador`
+  con todas sus líneas de una vez (y si `confirmar=true`, lo confirma en la misma
+  llamada). Decisión: validación 100% en JS, sin función/vista SQL (se acepta una
+  ventana mínima de carrera de milisegundos).
+- **Modal "Editar productos" en lote:** agregar/editar/quitar productos es **local**
+  (nada se inserta al instante). El disponible de cada talla se recalcula en cliente
+  (`cantidad_ventas + liberadas pendientes − agregadas pendientes`; `cantidad_ventas`
+  ya excluye las líneas del propio pedido). Al presionar **"Listo"** se aplica todo
+  (DELETEs → PATCHs → POSTs); si algo falla, el modal queda abierto con el error.
 
 ### 4.5 Alistado de viajes (escanear QR)
 
@@ -164,8 +195,8 @@
 
 ### 4.8 Lista de pedidos
 
-- Filtros por estado y búsqueda (código o resumen). No muestra borradores (ya no
-  se crean) ni pedidos ocultos. El controller ve todos.
+- Filtros por estado (incluye **Borrador**) y búsqueda (código o resumen). Por defecto
+  no muestra borradores ni pedidos ocultos. El controller ve todos.
 - Columnas: fecha de entrega, código, cliente, N°, resumen, vendedora, total,
   deuda, partes, estado (con acciones de cambio de estado).
 

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 import { calcularTotal } from "@/lib/pedidos";
+import { getStockVentasPorTalla } from "@/lib/productos";
 
 // PATCH /api/pedidos/[id]/detalles/[detalleId] — editar cantidad/precio/entalle
 // DELETE — borrado lógico (estado = oculto)
@@ -16,6 +17,12 @@ export async function PATCH(
   const { id, detalleId } = await params;
   const body = await request.json();
   const supabase = getSupabase();
+
+  const { data: pedido } = await supabase.from("pedidos").select("estado").eq("id", id).single();
+  const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
+  if (!pedido || !EDITABLES.includes(pedido.estado)) {
+    return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
+  }
 
   const { data: detalle } = await supabase
     .from("detalles_pedido")
@@ -44,6 +51,18 @@ export async function PATCH(
   const cantidad = Number(updates.cantidad ?? detalle.cantidad);
   const precio = Number(updates.precio_unitario ?? detalle.precio_unitario);
   updates.subtotal = cantidad * precio;
+
+  // Al aumentar la cantidad, verificar stock de ventas (el stock ya incluye este detalle).
+  if (updates.cantidad !== undefined && cantidad > Number(detalle.cantidad) && detalle.talla_id) {
+    const stockVentas = await getStockVentasPorTalla();
+    const disponible = Number(stockVentas[`${detalle.producto_id}|${detalle.talla_id}`] ?? 0);
+    if (disponible + Number(detalle.cantidad) < cantidad) {
+      return Response.json(
+        { error: `Stock insuficiente: solo puedes llegar a ${disponible + Number(detalle.cantidad)} en esa talla` },
+        { status: 400 }
+      );
+    }
+  }
 
   const { data: actualizado, error: err } = await supabase
     .from("detalles_pedido")
@@ -86,6 +105,12 @@ export async function DELETE(
 
   const { id, detalleId } = await params;
   const supabase = getSupabase();
+
+  const { data: pedido } = await supabase.from("pedidos").select("estado").eq("id", id).single();
+  const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
+  if (!pedido || !EDITABLES.includes(pedido.estado)) {
+    return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
+  }
 
   const { data: detalle } = await supabase
     .from("detalles_pedido")
