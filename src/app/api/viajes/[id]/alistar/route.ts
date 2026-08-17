@@ -196,3 +196,78 @@ export async function POST(
     talla_nueva: fueEntallado ? tallaNueva : null,
   }, { status: 201 });
 }
+
+// DELETE /api/viajes/[id]/alistar — quitar productos alistados (VPU)
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { user, error } = await requireRoles(["almacen", "controller", "admin"]);
+  if (error) return error;
+
+  const { id } = await params;
+  const body = await request.json();
+  const vpuIds: string[] = body.vpu_ids ?? [];
+  if (vpuIds.length === 0) {
+    return Response.json({ error: "Falta vpu_ids" }, { status: 400 });
+  }
+
+  const supabase = getSupabase();
+
+  const { data: viaje } = await supabase
+    .from("viajes")
+    .select("id, estado")
+    .eq("id", id)
+    .single();
+  if (!viaje) return Response.json({ error: "Viaje no encontrado" }, { status: 404 });
+  if (viaje.estado === "enviado" || viaje.estado === "terminado") {
+    return Response.json({ error: "El viaje ya fue enviado o terminado" }, { status: 400 });
+  }
+
+  // Traer los VPU que pertenecen a este viaje
+  const { data: vpus } = await supabase
+    .from("viaje_producto_unicos")
+    .select("id, producto_unico_id")
+    .eq("viaje_id", id)
+    .in("id", vpuIds);
+
+  if (!vpus || vpus.length === 0) {
+    return Response.json({ error: "No se encontraron productos para quitar" }, { status: 404 });
+  }
+
+  let eliminados = 0;
+  for (const vpu of vpus) {
+    // Restaurar producto a en_almacen
+    await supabase
+      .from("productos_unicos")
+      .update({ estado: "en_almacen", fecha_salida: null })
+      .eq("id", vpu.producto_unico_id);
+
+    // Kardex: salida (se devuelve al stock porque se quitó del viaje)
+    await supabase.from("movimientos_stock").insert({
+      tipo: "salida",
+      producto_unico_id: vpu.producto_unico_id,
+      cantidad: 1,
+      nota: `Producto removido del viaje ${id}`,
+      registrado_por: user.id,
+    });
+
+    // Historial
+    await supabase.from("historial_producto_unicos").insert({
+      producto_unico_id: vpu.producto_unico_id,
+      evento: "alistado",
+      viaje_id: id,
+      persona_id: user.id,
+      nota: `Removido del viaje ${id}`,
+    });
+
+    // Eliminar el VPU
+    await supabase.from("viaje_producto_unicos").delete().eq("id", vpu.id);
+    eliminados++;
+  }
+
+  // Recalcular estado del viaje
+  await recalcularEstadoViaje(id);
+
+  return Response.json({ eliminados });
+}

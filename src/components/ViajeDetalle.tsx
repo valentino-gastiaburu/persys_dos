@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { Button, Input, Badge, Spinner, ErrorBanner } from "@/components/ui";
+import { Button, Badge, Spinner, ErrorBanner } from "@/components/ui";
 import { Html5Qrcode } from "html5-qrcode";
 
 const ESTADO_BADGE: Record<string, string> = {
@@ -70,9 +70,9 @@ type Pendiente = {
   key: string;
   codigo_qr: string;
   imei: string;
-  nombre: string;
-  talla_id: string | null;
   detalle_id: string;
+  producto_unico_id: string;
+  talla_id: string | null;
 };
 
 export default function ViajeDetalle() {
@@ -88,20 +88,24 @@ export default function ViajeDetalle() {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tipo: "ok" | "err"; texto: string } | null>(null);
 
-  // Producto seleccionado para alistar
-  const [seleccionado, setSeleccionado] = useState<Item | null>(null);
-  // Unidades alistadas localmente (pendientes de guardar)
+  // Escaneo local (pendientes de guardar)
   const [pendientes, setPendientes] = useState<Pendiente[]>([]);
-  // Buscador con autocompletado
-  const [busqueda, setBusqueda] = useState("");
-  const [sugerencias, setSugerencias] = useState<StockDisponible[]>([]);
-  const [buscando, setBuscando] = useState(false);
-  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
+  // VPU IDs marcados para eliminar
+  const [eliminados, setEliminados] = useState<string[]>([]);
+  // Slot que se está escaneando actualmente
+  const [slotScanning, setSlotScanning] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
   // Scanner de cámara
   const [scannerActivo, setScannerActivo] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerDivId = "qr-scanner";
+
+  // Búsqueda manual por texto
+  const [busquedaActiva, setBusquedaActiva] = useState(false);
+  const [busquedaSlot, setBusquedaSlot] = useState<string | null>(null);
+  const [busquedaTexto, setBusquedaTexto] = useState("");
+  const [busquedaData, setBusquedaData] = useState<StockDisponible[]>([]);
+  const [buscandoStock, setBuscandoStock] = useState(false);
 
   const cargar = useCallback(async () => {
     const { data, error } = await api<{
@@ -139,155 +143,7 @@ export default function ViajeDetalle() {
     };
   }, []);
 
-  // Buscar sugerencias cuando cambia el texto o el producto seleccionado
-  useEffect(() => {
-    if (!seleccionado) {
-      setSugerencias([]);
-      return;
-    }
-    setBuscando(true);
-    const timer = setTimeout(() => {
-      api<{ disponibles: StockDisponible[] }>(
-        `/api/viajes/${id}/stock?detalle_id=${seleccionado.detalle_id}&q=${encodeURIComponent(busqueda)}`
-      ).then(({ data }) => {
-        setSugerencias(data?.disponibles ?? []);
-        setBuscando(false);
-      });
-    }, 200); // debounce para no saturar
-    return () => clearTimeout(timer);
-  }, [busqueda, seleccionado, id]);
-
-  // Agregar una unidad a pendientes (local, sin tocar BD)
-  function agregarPendiente(s: StockDisponible) {
-    if (!seleccionado) return;
-    // Evitar duplicados en pendientes
-    if (pendientes.some((p) => p.codigo_qr === s.codigo_qr)) {
-      setMsg({ tipo: "err", texto: "Esa unidad ya está en la lista de alistado" });
-      return;
-    }
-    // Evitar duplicados con ya alistados
-    if (alistados.some((a) => a.productos_unicos?.codigo_qr === s.codigo_qr)) {
-      setMsg({ tipo: "err", texto: "Esa unidad ya fue alistada" });
-      return;
-    }
-    setPendientes((prev) => [
-      ...prev,
-      {
-        key: `pend-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        codigo_qr: s.codigo_qr,
-        imei: s.imei,
-        nombre: s.nombre,
-        talla_id: s.talla_id,
-        detalle_id: seleccionado.detalle_id,
-      },
-    ]);
-    setBusqueda("");
-    setSugerencias([]);
-    setMsg(null);
-  }
-
-  // Quitar una unidad pendiente
-  function quitarPendiente(key: string) {
-    setPendientes((prev) => prev.filter((p) => p.key !== key));
-  }
-
-  // Guardar todas las pendientes en batch
-  async function guardarAlistados() {
-    if (pendientes.length === 0) {
-      setMsg({ tipo: "err", texto: "No hay unidades pendientes por guardar" });
-      return;
-    }
-    setGuardando(true);
-    setMsg(null);
-    const { data, error } = await api(`/api/viajes/${id}/alistar/batch`, {
-      method: "POST",
-      body: JSON.stringify({
-        lineas: pendientes.map((p) => ({
-          codigo_qr: p.codigo_qr,
-          detalle_id: p.detalle_id,
-        })),
-      }),
-    });
-    setGuardando(false);
-    if (error) {
-      setMsg({ tipo: "err", texto: error });
-      return;
-    }
-    const guardados = (data as any)?.guardados ?? [];
-    const errores = (data as any)?.errores ?? [];
-    const viajeAlistado = (data as any)?.viaje_alistado;
-
-    if (errores.length > 0) {
-      setMsg({
-        tipo: "err",
-        texto: `${guardados.length} guardados, ${errores.length} con error: ${errores[0].error}`,
-      });
-    } else {
-      setMsg({
-        tipo: "ok",
-        texto: `${guardados.length} unidades alistadas${viajeAlistado ? " · Viaje marcado como alistado" : ""}`,
-      });
-    }
-    setPendientes([]);
-    setSeleccionado(null);
-    setBusqueda("");
-    cargar();
-  }
-
-  async function cambiarEstado(nuevo: string) {
-    setMsg(null);
-    const { error } = await api(`/api/viajes/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ estado: nuevo }),
-    });
-    if (error) setMsg({ tipo: "err", texto: error });
-    else {
-      setMsg({ tipo: "ok", texto: `Viaje marcado como ${nuevo}` });
-      cargar();
-    }
-  }
-
-  // Iniciar scanner de cámara
-  async function iniciarScanner() {
-    setScannerActivo(true);
-    setMsg(null);
-    try {
-      const scanner = new Html5Qrcode(scannerDivId);
-      scannerRef.current = scanner;
-      await scanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        (decodedText) => {
-          // Al escanear, buscar la unidad en el stock disponible y agregarla
-          setBusqueda(decodedText);
-          const encontrada = sugerencias.find((s) => s.codigo_qr === decodedText);
-          if (encontrada) {
-            agregarPendiente(encontrada);
-            detenerScanner();
-          } else {
-            api<{ disponibles: StockDisponible[] }>(
-              `/api/viajes/${id}/stock?detalle_id=${seleccionado?.detalle_id}&q=${encodeURIComponent(decodedText)}`
-            ).then(({ data }) => {
-              const exacta = (data?.disponibles ?? []).find((s) => s.codigo_qr === decodedText);
-              if (exacta) {
-                agregarPendiente(exacta);
-              } else {
-                setMsg({ tipo: "err", texto: "No se encontró una unidad válida con ese QR" });
-              }
-              detenerScanner();
-            });
-          }
-        },
-        () => {
-          // ignore frame errors
-        }
-      );
-    } catch (e) {
-      setScannerActivo(false);
-      setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos." });
-    }
-  }
-
+  // Detener scanner helper
   async function detenerScanner() {
     if (scannerRef.current) {
       try {
@@ -299,6 +155,229 @@ export default function ViajeDetalle() {
       scannerRef.current = null;
     }
     setScannerActivo(false);
+    setSlotScanning(null);
+  }
+
+  // Escanear un QR para un detalle específico
+  async function procesarEscaneo(codigoQr: string) {
+    if (!slotScanning) return;
+    setMsg(null);
+
+    // Verificar duplicado local
+    if (pendientes.some((p) => p.codigo_qr === codigoQr)) {
+      setMsg({ tipo: "err", texto: "Ese producto ya está en la lista" });
+      detenerScanner();
+      return;
+    }
+    // Verificar duplicado con ya alistados en BD
+    if (alistados.some((a) => a.productos_unicos?.codigo_qr === codigoQr)) {
+      setMsg({ tipo: "err", texto: "Ese producto ya fue alistado" });
+      detenerScanner();
+      return;
+    }
+
+    // Validar contra stock disponible
+    const { data, error } = await api<{ disponibles: StockDisponible[] }>(
+      `/api/viajes/${id}/stock?detalle_id=${slotScanning}&q=${encodeURIComponent(codigoQr)}`
+    );
+    if (error) {
+      setMsg({ tipo: "err", texto: error });
+      detenerScanner();
+      return;
+    }
+
+    const encontrado = (data?.disponibles ?? []).find((s) => s.codigo_qr === codigoQr);
+    if (!encontrado) {
+      setMsg({ tipo: "err", texto: `El producto ${codigoQr} no coincide con este detalle (producto/talla incorrecta o sin stock)` });
+      detenerScanner();
+      return;
+    }
+
+    // Agregar a pendientes
+    setPendientes((prev) => [
+      ...prev,
+      {
+        key: `pend-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        codigo_qr: encontrado.codigo_qr,
+        imei: encontrado.imei,
+        detalle_id: slotScanning,
+        producto_unico_id: encontrado.id,
+        talla_id: encontrado.talla_id,
+      },
+    ]);
+    setMsg({ tipo: "ok", texto: `Agregado: ${encontrado.imei} (${encontrado.codigo_qr})` });
+    detenerScanner();
+  }
+
+  // Iniciar scanner para un slot específico
+  function iniciarScannerParaSlot(detalleId: string) {
+    setSlotScanning(detalleId);
+    setMsg(null);
+    setScannerActivo(true);
+
+    // Esperar al siguiente render para que el div exista
+    setTimeout(() => {
+      try {
+        const scanner = new Html5Qrcode(scannerDivId);
+        scannerRef.current = scanner;
+        scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText) => {
+            procesarEscaneo(decodedText);
+          },
+          () => {}
+        ).catch(() => {
+          setScannerActivo(false);
+          setSlotScanning(null);
+          setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos." });
+        });
+      } catch {
+        setScannerActivo(false);
+        setSlotScanning(null);
+        setMsg({ tipo: "err", texto: "No se pudo abrir la cámara." });
+      }
+    }, 100);
+  }
+
+  // Quitar un pendiente local
+  function quitarPendiente(key: string) {
+    setPendientes((prev) => prev.filter((p) => p.key !== key));
+  }
+
+  // Abrir overlay de búsqueda manual — carga todo el stock de una vez
+  async function abrirBusqueda(detalleId: string) {
+    setBusquedaSlot(detalleId);
+    setBusquedaTexto("");
+    setBusquedaData([]);
+    setBusquedaActiva(true);
+    setBuscandoStock(true);
+    setMsg(null);
+    const { data, error } = await api<{ disponibles: StockDisponible[] }>(
+      `/api/viajes/${id}/stock?detalle_id=${detalleId}`
+    );
+    setBuscandoStock(false);
+    if (error) {
+      setMsg({ tipo: "err", texto: error });
+      setBusquedaActiva(false);
+      return;
+    }
+    setBusquedaData(data?.disponibles ?? []);
+  }
+
+  // Seleccionar un producto de la búsqueda manual
+  function seleccionarDeBusqueda(s: StockDisponible) {
+    if (!busquedaSlot) return;
+    if (pendientes.some((p) => p.codigo_qr === s.codigo_qr)) {
+      setMsg({ tipo: "err", texto: "Ese producto ya está en la lista" });
+      return;
+    }
+    if (alistados.some((a) => a.productos_unicos?.codigo_qr === s.codigo_qr)) {
+      setMsg({ tipo: "err", texto: "Ese producto ya fue alistado" });
+      return;
+    }
+    setPendientes((prev) => [
+      ...prev,
+      {
+        key: `pend-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        codigo_qr: s.codigo_qr,
+        imei: s.imei,
+        detalle_id: busquedaSlot,
+        producto_unico_id: s.id,
+        talla_id: s.talla_id,
+      },
+    ]);
+    setMsg({ tipo: "ok", texto: `Agregado: ${s.imei} (${s.codigo_qr})` });
+    setBusquedaActiva(false);
+  }
+
+  // Quitar un VPU guardado (marcar para eliminación + ocultar del slot)
+  function marcarEliminado(vpuId: string) {
+    setEliminados((prev) => [...prev, vpuId]);
+    // Quitar del estado local para que desaparezca del slot de inmediato
+    setAlistados((prev) => prev.filter((a) => a.id !== vpuId));
+  }
+
+  // Guardar todos los cambios (agregados + eliminados)
+  async function guardarCambios() {
+    if (pendientes.length === 0 && eliminados.length === 0) {
+      setMsg({ tipo: "err", texto: "No hay cambios para guardar" });
+      return;
+    }
+    setGuardando(true);
+    setMsg(null);
+
+    let guardados = 0;
+    let errores = 0;
+
+    // Guardar nuevos escaneos
+    if (pendientes.length > 0) {
+      const { data, error } = await api<{
+        guardados?: { codigo_qr: string }[];
+        errores?: { codigo_qr: string; error: string }[];
+      }>(`/api/viajes/${id}/alistar/batch`, {
+        method: "POST",
+        body: JSON.stringify({
+          lineas: pendientes.map((p) => ({
+            codigo_qr: p.codigo_qr,
+            detalle_id: p.detalle_id,
+          })),
+        }),
+      });
+      if (error) {
+        setMsg({ tipo: "err", texto: error });
+        setGuardando(false);
+        return;
+      }
+      guardados = (data?.guardados ?? []).length;
+      errores = (data?.errores ?? []).length;
+    }
+
+    // Eliminar VPU marcados
+    if (eliminados.length > 0) {
+      const { error } = await api(`/api/viajes/${id}/alistar`, {
+        method: "DELETE",
+        body: JSON.stringify({ vpu_ids: eliminados }),
+      });
+      if (error) {
+        setMsg({ tipo: "err", texto: `Guardado parcial. Error al quitar: ${error}` });
+        setGuardando(false);
+        return;
+      }
+    }
+
+    const partes: string[] = [];
+    if (guardados > 0) partes.push(`${guardados} guardados`);
+    if (errores > 0) partes.push(`${errores} con error`);
+    if (eliminados.length > 0) partes.push(`${eliminados.length} quitados`);
+
+    setMsg({
+      tipo: errores > 0 ? "err" : "ok",
+      texto: partes.join(", ") || "Cambios guardados",
+    });
+
+    setPendientes([]);
+    setEliminados([]);
+    setGuardando(false);
+    cargar();
+  }
+
+  // Guardar y marcar como alistado (atajo)
+  async function guardarYMarcarAlistado() {
+    await guardarCambios();
+  }
+
+  async function cambiarEstado(nuevo: string) {
+    setMsg(null);
+    const { error: err } = await api(`/api/viajes/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ estado: nuevo }),
+    });
+    if (err) setMsg({ tipo: "err", texto: err });
+    else {
+      setMsg({ tipo: "ok", texto: `Viaje marcado como ${nuevo}` });
+      cargar();
+    }
   }
 
   if (loading) return <Spinner />;
@@ -506,32 +585,25 @@ export default function ViajeDetalle() {
   }
   // ─── FIN FLUJO RECOJO ──────────────────────────────────────────────────
 
-  // Unidades alistadas combinadas: las de BD + las pendientes
-  const unidadesAlistadas = [
-    ...alistados.map((a) => ({
-      key: a.id,
-      codigo_qr: a.productos_unicos?.codigo_qr ?? "—",
-      imei: a.productos_unicos?.productos?.imei ?? "—",
-      talla_nombre: a.productos_unicos?.tallas?.nombre ?? null,
-      talla_original_nombre: a.productos_unicos?.tallas_original?.nombre ?? null,
-      talla_id: a.productos_unicos?.talla_id ?? null,
-      talla_original: a.productos_unicos?.talla_original ?? null,
-      pendiente: false,
-    })),
-    ...pendientes.map((p) => ({
-      key: p.key,
-      codigo_qr: p.codigo_qr,
-      imei: p.imei,
-      talla_nombre: null,
-      talla_original_nombre: null,
-      talla_id: p.talla_id,
-      talla_original: null,
-      pendiente: true,
-    })),
-  ];
+  // ─── FLUJO ENTREGA ──────────────────────────────────────────────────────
+
+  // Agrupar unidades alistadas por detalle
+  const unidadesPorDetalle = new Map<string, { bd: Alistado[]; local: Pendiente[] }>();
+  for (const item of items) {
+    unidadesPorDetalle.set(item.detalle_id, { bd: [], local: [] });
+  }
+  for (const a of alistados) {
+    const d = unidadesPorDetalle.get(a.detalle_pedido_id ?? "");
+    if (d) d.bd.push(a);
+  }
+  for (const p of pendientes) {
+    const d = unidadesPorDetalle.get(p.detalle_id);
+    if (d) d.local.push(p);
+  }
 
   return (
     <div>
+      {/* Header */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -546,22 +618,6 @@ export default function ViajeDetalle() {
             {viaje.tipo === "recojo" ? "Recojo" : "Entrega"} · Pedido {pedidoCodigo ?? "—"} ·{" "}
             {clienteNombre ?? "Sin cliente"}
           </p>
-          {viaje.tipo === "recojo" && (
-            <p className="mt-1 text-xs text-slate-500">
-              Programado:{" "}
-              <strong className="text-slate-700">
-                {viaje.fecha ? new Date(viaje.fecha + "T00:00:00").toLocaleDateString("es-PE") : "—"}
-              </strong>
-              {viaje.fecha_devolucion && (
-                <>
-                  {" "}· Devuelto:{" "}
-                  <strong className="text-emerald-600">
-                    {new Date(viaje.fecha_devolucion).toLocaleDateString("es-PE")}
-                  </strong>
-                </>
-              )}
-            </p>
-          )}
         </div>
         <div className="text-right">
           <p className="text-sm text-slate-600">
@@ -583,73 +639,259 @@ export default function ViajeDetalle() {
         </div>
       )}
 
-      {/* Tabla de productos a alistar */}
-      <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+      {/* Scanner overlay */}
+      {scannerActivo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="relative mx-4 w-full max-w-sm rounded-2xl bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-slate-700">
+                Escaneando para: {items.find((i) => i.detalle_id === slotScanning)?.nombre ?? "—"}
+              </span>
+              <button
+                onClick={detenerScanner}
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200"
+              >
+                ✕
+              </button>
+            </div>
+            <div id={scannerDivId} className="overflow-hidden rounded-lg bg-black" />
+          </div>
+        </div>
+      )}
+
+      {/* Búsqueda manual overlay */}
+      {busquedaActiva && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="relative mx-4 flex max-h-[80vh] w-full max-w-sm flex-col rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <span className="text-sm font-semibold text-slate-700">
+                Buscar producto · {items.find((i) => i.detalle_id === busquedaSlot)?.nombre ?? "—"}
+              </span>
+              <button
+                onClick={() => setBusquedaActiva(false)}
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="px-4 pt-3">
+              <input
+                autoFocus
+                placeholder="Filtra por código QR, IMEI o nombre..."
+                value={busquedaTexto}
+                onChange={(e) => setBusquedaTexto(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-2">
+              {buscandoStock ? (
+                <p className="py-4 text-center text-sm text-slate-400">Cargando productos...</p>
+              ) : (() => {
+                const filtro = busquedaTexto.toLowerCase();
+                const filtrados = filtro
+                  ? busquedaData.filter(
+                      (s) =>
+                        s.codigo_qr.toLowerCase().includes(filtro) ||
+                        s.imei.toLowerCase().includes(filtro) ||
+                        s.nombre.toLowerCase().includes(filtro)
+                    )
+                  : busquedaData;
+                if (filtrados.length === 0) {
+                  return (
+                    <p className="py-4 text-center text-sm text-slate-400">
+                      {busquedaData.length === 0 ? "No hay productos disponibles" : "Sin resultados para esa búsqueda"}
+                    </p>
+                  );
+                }
+                return (
+                  <ul className="space-y-1">
+                    {filtrados.map((s) => {
+                      const yaEnLista =
+                        pendientes.some((p) => p.codigo_qr === s.codigo_qr) ||
+                        alistados.some((a) => a.productos_unicos?.codigo_qr === s.codigo_qr);
+                      return (
+                        <li key={s.id}>
+                          <button
+                            disabled={yaEnLista}
+                            onClick={() => seleccionarDeBusqueda(s)}
+                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                              yaEnLista
+                                ? "cursor-not-allowed bg-slate-50 opacity-50"
+                                : "hover:bg-blue-50"
+                            }`}
+                          >
+                            <div>
+                              <span className="font-mono text-xs text-slate-500">{s.codigo_qr}</span>
+                              <span className="ml-2 text-slate-700">{s.imei}</span>
+                            </div>
+                            <span className="text-xs text-slate-400">{s.nombre}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+      <section className="mb-4 overflow-hidden rounded-xl border border-slate-300 bg-white">
         <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
           <h2 className="text-sm font-semibold text-slate-700">
-            {viaje.tipo === "recojo" ? "Productos a recoger" : "Productos a alistar"}
+            Productos a alistar
           </h2>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <th className="px-4 py-2">IMEI</th>
-                <th className="px-4 py-2">TALLA</th>
-                <th className="px-4 py-2">CANTIDAD</th>
-                <th className="px-4 py-2">ENTALLAR A:</th>
+              <tr className="border-b-2 border-slate-300 bg-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <th className="border-r border-slate-200 px-3 py-2">IMEI</th>
+                <th className="border-r border-slate-200 px-3 py-2">TALLA</th>
+                <th className="border-r border-slate-200 px-3 py-2">CANTIDAD</th>
+                <th className="border-r border-slate-200 px-3 py-2">ENTALLAR A:</th>
+                <th className="border-r border-slate-200 px-3 py-2">ID PRODUCTO ÚNICO</th>
+                <th className="px-3 py-2">ESTADO</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((i) => {
-                const esSeleccionado = seleccionado?.detalle_id === i.detalle_id;
-                const pendientesDetalle = pendientes.filter((p) => p.detalle_id === i.detalle_id).length;
-                const alistadasDetalle = i.alistados + pendientesDetalle;
-                const completo = alistadasDetalle >= i.cantidad;
-                return (
-                  <tr
-                    key={i.detalle_id}
-                    onClick={() => {
-                      if (activo && !completo) {
-                        setSeleccionado(esSeleccionado ? null : i);
-                        setBusqueda("");
-                        setSugerencias([]);
-                      }
-                    }}
-                    className={`cursor-pointer border-b border-slate-100 transition-colors last:border-0 ${
-                      esSeleccionado ? "bg-blue-50" : completo ? "bg-emerald-50" : "hover:bg-slate-50"
-                    }`}
-                  >
-                    <td className="px-4 py-2 font-mono text-xs text-slate-500">{i.imei}</td>
-                    <td className="px-4 py-2 font-medium text-slate-800">
-                      {i.talla_stock_nombre ?? "Sin talla"}
-                    </td>
-                    <td className="px-4 py-2">
-                      <span className="font-semibold text-slate-800">{alistadasDetalle}/{i.cantidad}</span>
-                      {completo && (
-                        <span className="ml-2 inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                          completo
-                        </span>
+              {items.map((item) => {
+                const grupos = unidadesPorDetalle.get(item.detalle_id);
+                const bdUnits = grupos?.bd ?? [];
+                const localUnits = grupos?.local ?? [];
+                const totalListas = bdUnits.length + localUnits.length;
+                const slots: Array<{ tipo: "bd"; data: Alistado } | { tipo: "local"; data: Pendiente } | { tipo: "vacio" }> = [];
+                for (const u of bdUnits) slots.push({ tipo: "bd", data: u });
+                for (const u of localUnits) slots.push({ tipo: "local", data: u });
+                while (slots.length < item.cantidad) slots.push({ tipo: "vacio" });
+                const slotsVisibles = slots.slice(0, item.cantidad);
+                const completo = totalListas >= item.cantidad;
+                const rowSpan = slotsVisibles.length;
+
+                return slotsVisibles.map((slot, idx) => {
+                  const isFirst = idx === 0;
+                  const bgColor = completo
+                    ? "bg-emerald-50"
+                    : slot.tipo === "bd"
+                      ? "bg-blue-50"
+                      : slot.tipo === "local"
+                        ? "bg-amber-50"
+                        : "bg-white";
+
+                  return (
+                    <tr key={`${item.detalle_id}-${idx}`} className={`border-b border-slate-200 last:border-b-0 ${bgColor}`}>
+                      {/* IMEI — solo primera fila con rowSpan */}
+                      {isFirst && (
+                        <td
+                          rowSpan={rowSpan}
+                          className="border-r border-b border-slate-200 px-3 py-2 font-mono text-xs text-slate-500 align-middle"
+                        >
+                          {item.imei ?? "—"}
+                        </td>
                       )}
-                      {esSeleccionado && (
-                        <span className="ml-2 inline-block rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                          seleccionado
-                        </span>
+                      {/* TALLA — solo primera fila con rowSpan */}
+                      {isFirst && (
+                        <td
+                          rowSpan={rowSpan}
+                          className="border-r border-b border-slate-200 px-3 py-2 font-medium text-slate-800 align-middle"
+                        >
+                          {item.talla_stock_nombre ?? "Sin talla"}
+                        </td>
                       )}
-                    </td>
-                    <td className="px-4 py-2 text-slate-600">
-                      {i.entalle ? (
-                        <span className="font-medium text-purple-700">{i.talla_vendida_nombre ?? "—"}</span>
-                      ) : (
-                        <span className="text-slate-400">—</span>
+                      {/* CANTIDAD — solo primera fila con rowSpan */}
+                      {isFirst && (
+                        <td
+                          rowSpan={rowSpan}
+                          className="border-r border-b border-slate-200 px-3 py-2 align-middle"
+                        >
+                          <span className="font-semibold text-slate-800">{totalListas}/{item.cantidad}</span>
+                        </td>
                       )}
-                    </td>
-                  </tr>
-                );
+                      {/* ENTALLAR A — solo primera fila con rowSpan */}
+                      {isFirst && (
+                        <td
+                          rowSpan={rowSpan}
+                          className="border-r border-b border-slate-200 px-3 py-2 align-middle"
+                        >
+                          {item.entalle ? (
+                            <span className="font-medium text-purple-700">{item.talla_vendida_nombre ?? "—"}</span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                      )}
+                      {/* ID PRODUCTO ÚNICO — cada fila tiene su slot */}
+                      <td className="border-r border-slate-200 px-3 py-2.5">
+                        {slot.tipo === "bd" ? (
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 font-mono text-xs font-semibold text-emerald-700">
+                              {slot.data.productos_unicos?.codigo_qr ?? "—"}
+                            </span>
+                            {activo && (
+                              <button
+                                onClick={() => marcarEliminado(slot.data.id)}
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-red-300 bg-red-50 text-sm font-bold text-red-500 transition-colors hover:bg-red-500 hover:text-white"
+                                title="Quitar"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        ) : slot.tipo === "local" ? (
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 font-mono text-xs font-semibold text-amber-700">
+                              {slot.data.codigo_qr}
+                            </span>
+                            <span className="text-[10px] text-amber-500">pendiente</span>
+                            <button
+                              onClick={() => quitarPendiente(slot.data.key)}
+                              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-red-300 bg-red-50 text-sm font-bold text-red-500 transition-colors hover:bg-red-500 hover:text-white"
+                              title="Quitar"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => iniciarScannerParaSlot(item.detalle_id)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-dashed border-blue-300 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 transition-colors hover:border-blue-400 hover:bg-blue-100"
+                            >
+                              📷 Escanear
+                            </button>
+                            <button
+                              onClick={() => abrirBusqueda(item.detalle_id)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 transition-colors hover:border-slate-400 hover:bg-slate-100"
+                            >
+                              ✏️ Escribir
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      {/* ESTADO — solo primera fila con rowSpan */}
+                      {isFirst && (
+                        <td
+                          rowSpan={rowSpan}
+                          className="px-3 py-2 align-middle"
+                        >
+                          {completo ? (
+                            <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                              completo
+                            </span>
+                          ) : (
+                            <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                              incompleto
+                            </span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                });
               })}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-4 text-center text-sm text-slate-400">
+                  <td colSpan={6} className="px-4 py-4 text-center text-sm text-slate-400">
                     Sin productos asignados.
                   </td>
                 </tr>
@@ -659,173 +901,25 @@ export default function ViajeDetalle() {
         </div>
       </section>
 
-      {/* Área de alistado del producto seleccionado */}
-      {activo && seleccionado && (
-        <section className="mb-4 rounded-xl border-2 border-blue-300 bg-blue-50 p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-blue-800">
-              Alistar: {seleccionado.nombre} ({seleccionado.imei}) · Talla{" "}
-              {seleccionado.talla_stock_nombre ?? "Sin talla"}
-              {seleccionado.entalle && (
-                <span className="text-purple-700"> → Entallar a: {seleccionado.talla_vendida_nombre ?? "—"}</span>
-              )}
-            </h2>
-            <Button size="sm" variant="secondary" onClick={() => setSeleccionado(null)}>
-              Cancelar
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap items-start gap-2">
-            <div className="relative max-w-sm flex-1">
-              <input
-                placeholder="Busca o escanea el código QR / IMEI"
-                value={busqueda}
-                onChange={(e) => {
-                  setBusqueda(e.target.value);
-                  setMostrarSugerencias(true);
-                }}
-                onFocus={() => setMostrarSugerencias(true)}
-                onBlur={() => setTimeout(() => setMostrarSugerencias(false), 200)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && sugerencias.length > 0) {
-                    agregarPendiente(sugerencias[0]);
-                  }
-                }}
-                autoFocus
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-              {mostrarSugerencias && (
-                <div className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                  {buscando ? (
-                    <p className="px-3 py-2 text-sm text-slate-400">Buscando...</p>
-                  ) : sugerencias.length === 0 ? (
-                    <p className="px-3 py-2 text-sm text-slate-400">Sin resultados</p>
-                  ) : (
-                    sugerencias.map((s) => (
-                      <button
-                        key={s.id}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          agregarPendiente(s);
-                        }}
-                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-blue-50"
-                      >
-                        <span className="font-mono text-xs text-slate-500">{s.codigo_qr}</span>
-                        <span className="text-slate-700">{s.imei}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-            <Button onClick={() => agregarPendiente(sugerencias[0])} disabled={!sugerencias.length}>
-              Alistar
-            </Button>
-            {!scannerActivo ? (
-              <Button variant="secondary" onClick={iniciarScanner}>
-                📷 Escanear con cámara
-              </Button>
-            ) : (
-              <Button variant="danger" onClick={detenerScanner}>
-                Detener cámara
-              </Button>
-            )}
-          </div>
-
-          {scannerActivo && (
-            <div className="mt-3">
-              <div id={scannerDivId} className="overflow-hidden rounded-lg bg-black" />
-            </div>
-          )}
-
-          {/* Pendientes de este producto */}
-          {pendientes.filter((p) => p.detalle_id === seleccionado.detalle_id).length > 0 && (
-            <div className="mt-3">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-700">
-                Pendientes de guardar ({pendientes.filter((p) => p.detalle_id === seleccionado.detalle_id).length})
-              </h3>
-              <div className="space-y-1">
-                {pendientes
-                  .filter((p) => p.detalle_id === seleccionado.detalle_id)
-                  .map((p) => (
-                    <div key={p.key} className="flex items-center justify-between rounded-lg bg-white px-3 py-1.5 text-sm">
-                      <span className="font-mono text-xs text-slate-500">{p.codigo_qr}</span>
-                      <span className="text-slate-600">{p.imei}</span>
-                      <Button size="sm" variant="danger" onClick={() => quitarPendiente(p.key)}>
-                        Quitar
-                      </Button>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          )}
-        </section>
+      {/* Resumen eliminados */}
+      {eliminados.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-700">
+          {eliminados.length} unidad(es) marcadas para quitar. Presiona "Guardar cambios" para aplicar.
+        </div>
       )}
 
-      {activo && !seleccionado && (
-        <p className="mb-4 rounded-lg bg-slate-50 px-4 py-2 text-sm text-slate-500">
-          Selecciona un producto de la tabla para alistarlo.
-        </p>
-      )}
-
-      {/* Tabla de unidades alistadas */}
-      <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
-          <h2 className="text-sm font-semibold text-slate-700">
-            Unidades alistadas ({unidadesAlistadas.length})
-          </h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <th className="px-4 py-2">IMEI</th>
-                <th className="px-4 py-2">TALLA</th>
-                <th className="px-4 py-2">ENTALLAR A:</th>
-                <th className="px-4 py-2">ID PRODUCTO ÚNICO</th>
-              </tr>
-            </thead>
-            <tbody>
-              {unidadesAlistadas.map((u) => (
-                <tr key={u.key} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-2 font-mono text-xs text-slate-500">{u.imei}</td>
-                  <td className="px-4 py-2 text-slate-700">
-                    {u.talla_original_nombre ? u.talla_original_nombre : u.talla_nombre ?? "—"}
-                  </td>
-                  <td className="px-4 py-2 text-slate-600">
-                    {u.talla_original_nombre && u.talla_nombre && u.talla_original_nombre !== u.talla_nombre ? (
-                      <span className="font-medium text-purple-700">{u.talla_nombre}</span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2">
-                    <span className="font-mono text-xs text-slate-500">{u.codigo_qr}</span>
-                    {u.pendiente && (
-                      <span className="ml-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                        pendiente
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {unidadesAlistadas.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-4 text-center text-sm text-slate-400">
-                    Aún no se alista nada.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
+      {/* Acciones */}
       {activo && (
         <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={guardarCambios}
+            disabled={guardando || (pendientes.length === 0 && eliminados.length === 0)}
+          >
+            {guardando ? "Guardando..." : `Guardar cambios${pendientes.length + eliminados.length > 0 ? ` (${pendientes.length}+${eliminados.length})` : ""}`}
+          </Button>
           {viaje.estado === "programado" && (
-            <Button onClick={guardarAlistados} disabled={guardando || pendientes.length === 0}>
-              {guardando ? "Guardando..." : "Marcar como alistado"}
+            <Button onClick={guardarYMarcarAlistado} disabled={guardando || totalAlistadas === 0}>
+              Guardar y marcar alistado
             </Button>
           )}
           {viaje.estado === "alistado" && (
@@ -833,7 +927,7 @@ export default function ViajeDetalle() {
           )}
           {viaje.estado === "enviado" && (
             <Button variant="success" onClick={() => cambiarEstado("terminado")}>
-              {viaje.tipo === "recojo" ? "Registrar devolución" : "Marcar entregado"}
+              Marcar entregado
             </Button>
           )}
         </div>
