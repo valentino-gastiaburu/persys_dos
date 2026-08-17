@@ -1,12 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import {
-  getDetallesActivos,
-  calcularTotal,
-  recalcularTotalViaje,
-  calcularTotalPedido,
-} from "@/lib/pedidos";
+import { calcularTotal, calcularTotalPedido, getDetallesActivos, recalcularTotalViaje } from "@/lib/pedidos";
 
 export async function GET(
   request: NextRequest,
@@ -61,7 +56,6 @@ export async function GET(
       tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
     `)
     .eq("pedido_id", id)
-    .not("estado", "eq", "oculto")
     .order("creado_el");
 
   const lineasPorViaje: Record<string, any[]> = {};
@@ -84,7 +78,7 @@ export async function GET(
       entalle: d.entalle,
       es_extra_motorizado: d.es_extra_motorizado,
       estado: d.estado,
-      devolucion: d.estado === "devuelto" || d.estado === "pendiente_devolucion",
+      devolucion: d.estado === "devuelto" || d.estado === "pendiente_devolucion" || d.estado === "oculto",
     });
   }
 

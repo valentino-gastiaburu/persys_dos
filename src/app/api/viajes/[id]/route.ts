@@ -43,7 +43,12 @@ export async function GET(
     .from("viaje_producto_unicos")
     .select(`
       id, detalle_pedido_id, estado, fecha_alistado, fecha_enviado,
-      productos_unicos(id, codigo_qr, talla_id, talla_original, productos(imei))
+      productos_unicos(
+        id, codigo_qr, talla_id, talla_original,
+        tallas!productos_unicos_talla_id_fkey(nombre),
+        tallas_original: tallas!productos_unicos_talla_original_fkey(nombre),
+        productos(imei)
+      )
     `)
     .eq("viaje_id", id);
 
@@ -269,10 +274,16 @@ export async function PATCH(
     }
   }
 
-  // Actualizar el estado del viaje
+  // Actualizar el estado del viaje. Si es un recojo que termina, registrar la
+  // fecha efectiva de devolución (cuando almacén escaneó el QR y la prenda
+  // volvió al stock).
+  const updates: Record<string, any> = { estado: nuevoEstado };
+  if (nuevoEstado === "terminado" && viaje.tipo === "recojo") {
+    updates.fecha_devolucion = new Date().toISOString();
+  }
   const { data: viajeActualizado, error: vErr } = await supabase
     .from("viajes")
-    .update({ estado: nuevoEstado })
+    .update(updates)
     .eq("id", id)
     .select()
     .single();

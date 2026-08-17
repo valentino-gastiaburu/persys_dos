@@ -198,16 +198,34 @@
 
 ### 4.5 Alistado de viajes (escanear QR)
 
+- **Flujo:** la de almacén entra a **Almacén/Viajes**, ve la lista con los viajes de
+  **hoy resaltados** (fondo azul + badge "Hoy", ordenados primero). Abre un viaje y
+  ve dos tablas:
+  - **Productos a alistar:** columnas IMEI, TALLA (talla stock = original), CANTIDAD
+    (progreso alistadas/total) y **ENTALLAR A:** (talla vendida destino, solo si hay
+    entalle).
+  - **Unidades alistadas:** columnas IMEI, TALLA (original), ENTALLAR A: (destino si
+    se entalló) e ID PRODUCTO ÚNICO (QR), con badge "pendiente" para las no guardadas.
+- **Selección:** click en una fila de la tabla de productos → se resalta visualmente
+  (sin llamada a BD). Se habilita el área de alistado para ese producto.
+- **Alistado local:** las unidades se agregan a una lista local (pendientes) mediante el
+  **buscador con autocompletado** (desplegable que filtra en vivo por QR/IMEI) o el
+  botón **"📷 Escanear con cámara"** (librería `html5-qrcode`). **Nada toca la BD hasta
+  presionar "Marcar como alistado"**.
+- **"Marcar como alistado":** envía todas las pendientes en **un solo request**
+  (`POST /api/viajes/[id]/alistar/batch`). Si quedan unidades sin completar, solo
+  guarda las pendientes; si TODAS las unidades del viaje están alistadas, además pasa
+  el viaje a `alistado` automáticamente.
 - **Entrega:** el producto debe estar `en_almacen` y pertenecer al listado del viaje.
   Coincide talla exacta: la unidad escaneada debe tener `talla_id == talla_stock`
   (la talla que hay en almacén). Si el detalle tiene **entalle**
-  (`talla_stock != talla_vendida`), luego se entalla a la **talla vendida** (destino).
+  (`talla_stock != talla_vendida`), entonces se entalla a la **talla vendida** (destino).
 - **Recojo:** el producto debe estar **`entregado`** y pertenecer al listado del
   regreso; la talla que coincide es la que tiene la unidad entregada (`talla_vendida`).
 - No puede exceder la `cantidad` del detalle. No se puede alistar en un viaje ya
-  `enviado`/`terminado` ni un QR ya alistado en el viaje.
-- Para marcar el viaje **alistado** se exige que **todas** las unidades del viaje
-  estén alistadas (vale para entregas y regresos).
+  `enviado`/`terminado` ni con la unidad ya alistada en el viaje.
+- Endpoints: `POST /api/viajes/[id]/alistar/batch` (alistado en lote),
+  `GET /api/viajes/[id]/stock?detalle_id=&q=` (búsqueda en el desplegable).
 
 ### 4.6 Envío / término de viajes
 
@@ -225,8 +243,9 @@
   agendadora, controller y admin. El detalle del pedido muestra una **tarjeta por
   viaje** con sus productos; la tabla de productos del pedido se oculta (cada viaje
   lleva los suyos).
-- **Viaje de regreso (recojo):** `{ tipo: "recojo", motivo, lineas: [{detalle_id,
+- **Viaje de regreso (recojo):** `{ tipo: "recojo", motivo, fecha, lineas: [{detalle_id,
   cantidad, precio_devolucion}] }`. Solo en pedidos entregados. Al crearlo:
+  - Se pide la **fecha programada** para la devolución (campo `fecha` del viaje).
   - Se crean líneas espejo con estado `pendiente_devolucion` y `devolucion_de`
     apuntando a la línea original.
   - La línea original **reduce su cantidad**; si se devuelve todo, pasa a `oculto`
@@ -236,7 +255,9 @@
     **0 permitido**). El `total` del regreso = Σ subtotales de sus líneas.
   - El `costo_envio` de un regreso es **informativo** (no se descuenta del pedido).
   - Al terminar el recojo, la unidad vuelve al almacén **con su talla actual** (no
-    se restaura la talla original; por eso el entalle se mantiene).
+    se restaura la talla original; por eso el entalle se mantiene) y se registra la
+    **fecha efectiva de devolución** (`viajes.fecha_devolucion` = cuando almacén
+    escaneó el QR y la prenda volvió al stock).
 - **Viaje de entrega extra:** `{ tipo: "entrega", fecha, direccion?, costo_envio,
   lineas[] }`. Valida stock como un pedido nuevo (`validarStockLineas`). Prohibido
   en `borrador`/`solicitado`/`cancelado`/`devuelto` (el primer viaje lo crea la

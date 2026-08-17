@@ -38,11 +38,11 @@ export async function POST(request: NextRequest) {
   if (!pedido) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
 
   if (tipo === "entrega") {
-    // Solo en pedidos ya confirmados (el primer viaje lo crea "Confirmar pedido")
-    // y no cerrados ni devueltos.
-    if (["borrador", "solicitado", "cancelado", "devuelto"].includes(pedido.estado)) {
+    // Solo crear viaje de entrega nuevo si el pedido ya fue enviado o entregado
+    // (el primer viaje lo crea "Confirmar pedido"). Evita viajes duplicados.
+    if (!["enviado", "entregado"].includes(pedido.estado)) {
       return Response.json(
-        { error: "Este pedido aún no admite agregar viajes de entrega" },
+        { error: "Solo se puede agregar un viaje de entrega cuando el pedido ya fue enviado" },
         { status: 400 }
       );
     }
@@ -206,14 +206,23 @@ export async function POST(request: NextRequest) {
       anadido_por: user.id,
     });
     const nuevaCant = Number(d.cantidad) - cant;
-    await supabase
-      .from("detalles_pedido")
-      .update({
-        cantidad: nuevaCant,
-        subtotal: nuevaCant * Number(d.precio_unitario || 0),
-        estado: nuevaCant <= 0 ? "oculto" : "activo",
-      })
-      .eq("id", d.id);
+    if (nuevaCant <= 0) {
+      // Devuelto todo: la línea queda oculta (sale del pedido) pero conserva su
+      // cantidad/subtotal originales como historial del viaje de ida.
+      await supabase
+        .from("detalles_pedido")
+        .update({ estado: "oculto" })
+        .eq("id", d.id);
+    } else {
+      await supabase
+        .from("detalles_pedido")
+        .update({
+          cantidad: nuevaCant,
+          subtotal: nuevaCant * Number(d.precio_unitario || 0),
+          estado: "activo",
+        })
+        .eq("id", d.id);
+    }
     if (d.viaje_id) {
       const { data: vOrigen } = await supabase
         .from("viajes")

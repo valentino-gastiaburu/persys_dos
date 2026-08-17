@@ -14,6 +14,7 @@ export async function POST(
   const { id } = await params;
   const body = await request.json();
   const codigoQr = String(body.codigo_qr ?? body.qr ?? "").trim();
+  const detalleId = body.detalle_id ? String(body.detalle_id) : null;
 
   if (!codigoQr) return Response.json({ error: "Escanea un código QR" }, { status: 400 });
 
@@ -60,8 +61,10 @@ export async function POST(
     return Response.json({ error: "Ese producto ya fue alistado en este viaje" }, { status: 400 });
   }
 
-  // Buscar un detalle del viaje que necesite este producto.
-  const { data: detalles } = await supabase
+  // Buscar un detalle del viaje que necesite este producto. Si se pasó un
+  // detalle_id (producto seleccionado en la UI), se fuerza la asignación a ese
+  // detalle; si no, se busca automáticamente el que coincida con IMEI y talla.
+  let queryDetalles = supabase
     .from("detalles_pedido")
     .select(`
       id, producto_id, talla_stock, talla_vendida, cantidad, entalle,
@@ -72,6 +75,12 @@ export async function POST(
     .not("estado", "eq", "oculto")
     .eq("producto_id", unico.producto_id)
     .order("creado_el");
+
+  if (detalleId) {
+    queryDetalles = queryDetalles.eq("id", detalleId);
+  }
+
+  const { data: detalles } = await queryDetalles;
 
   if (!detalles || detalles.length === 0) {
     return Response.json(

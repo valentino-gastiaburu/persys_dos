@@ -114,25 +114,32 @@ configuración.
 17. **El pedido es una colección de viajes** (16/ago/2026): cuando está **`entregado`** (o
     `esperando_*`/`cerrado`) la **única forma de modificarlo es con viajes**, no con "Editar
     productos". Creadores: vendedora, agendadora, controller, admin (API `POST /api/viajes`).
-    - **Viaje de entrega extra** (agrega productos): fecha, dirección (default la del pedido) y
-      costo de envío propios; valida stock como pedido nuevo. Prohibido en borrador/solicitado/
-      cancelado/devuelto (el primer viaje lo crea "Confirmar pedido"). Su costo de envío **sí
-      suma** al total.
-    - **Viaje de regreso / recojo** (quita productos, motivo `devolucion`/`cambio`): solo en
-      pedidos entregados. Al crearlo, cada línea original **reduce su cantidad** (si se devuelve
-      toda la línea pasa a `oculto`) y nace una línea espejo `pendiente_devolucion` con
-      `devolucion_de` → original. Devolución **parcial** soportada. Por prenda se edita el
-      **costo a devolver** (default precio original, **0 permitido**). Al terminar el recojo las
-      líneas pasan a `devuelto` y las unidades vuelven a almacén **con su talla actual** (no se
-      restaura la talla original). El `costo_envio` del regreso es **informativo**, no se descuenta.
-    - **Totales:** cada viaje tiene su propio `total` (Σ subtotales + costo_envio en entregas).
-      `monto_total` del pedido = Σ entregas **−** Σ regresos (`calcularTotalPedido`).
-    - **Estado del pedido:** rank mínimo entre viajes de entrega (`programado`→confirmado,
-      `alistado`→alistado, `enviado`→enviado, todos terminados→entregado); recojo pendiente →
-      `esperando_devolucion`/`esperando_cambio`. Un entregado con viaje extra vuelve a confirmado.
-    - Migración **`supabase/08_viajes_extras.sql`** (a correr por el usuario): añade
-      `viajes.costo_envio/total/direccion`, `detalles_pedido.devolucion_de` y los estados de
-      detalle `pendiente_devolucion`/`devuelto`, con backfill del `total` del viaje original.
+18. **Fechas de devolución** (16/ago/2026): en los viajes de regreso hay dos fechas:
+    - `viajes.fecha` = **fecha programada** para el recojo/devolución (se pide en el modal
+      "Viaje de regreso").
+    - `viajes.fecha_devolucion` = **fecha efectiva** en la que almacén terminó el recojo
+      (escaneó el QR y la prenda volvió al stock). Se registra automáticamente al marcar el
+      viaje de regreso como `terminado`. Migración **`supabase/09_fechas_devolucion.sql`**.
+19. **Módulo Almacén/Viajes rediseñado** (16/ago/2026):
+    - La lista de viajes **resalta los de hoy** (fondo azul + badge "Hoy") y los ordena primero.
+    - El detalle del viaje usa **tablas**:
+      - **Productos a alistar:** columnas IMEI, TALLA (talla stock = original), CANTIDAD
+        (progreso alistadas/total) y **ENTALLAR A:** (talla vendida destino, solo si hay entalle).
+      - **Unidades alistadas:** columnas IMEI, TALLA (original), ENTALLAR A: (destino si se
+        entalló) e ID PRODUCTO ÚNICO (QR), con badge "pendiente" para las no guardadas aún.
+    - **Alistado local (sin tocar BD):** al seleccionar un producto, las unidades se agregan a
+      una lista local `pendientes` (vía buscador con autocompletado o escaneo por cámara).
+      Nada se guarda en BD hasta presionar **"Marcar como alistado"**, que envía todas en
+      **un solo request** (`POST /api/viajes/[id]/alistar/batch`). Si quedan unidades sin
+      completar, solo guarda; si TODAS las unidades del viaje están alistadas, además pasa el
+      viaje a `alistado` automáticamente (opción B aprobada por el usuario).
+    - **Buscador con autocompletado:** al hacer click en el buscador se despliegan las
+      unidades disponibles del producto seleccionado; al escribir filtra en vivo por código QR
+      o IMEI (`GET /api/viajes/[id]/stock?detalle_id=&q=`). Botón **"📷 Escanear con cámara"**
+      (librería `html5-qrcode`) agrega la unidad escaneada a la lista local.
+    - Nuevo endpoint **`POST /api/viajes/[id]/alistar/batch`**: guarda múltiples unidades de
+      una vez, valida cada una (producto/talla/estado/duplicados) y responde cuáles se
+      guardaron y cuáles fallaron.
 
 ## Preguntas respondidas en el camino (resumen técnico)
 
@@ -176,9 +183,11 @@ configuración.
    `costo_envio`/`total`/`direccion`, a `detalles_pedido` `devolucion_de`, y los estados
    `pendiente_devolucion`/`devuelto` al enum `detalle_estado` (+ backfill del total del
    viaje de entrega original). Aditiva/idempotente.
+8. `supabase/09_fechas_devolucion.sql` → agrega `viajes.fecha_devolucion` (fecha efectiva
+   de devolución, cuando el recojo termina). Aditiva/idempotente.
 
-Para una BD nueva: **01 → 02 → 03 → 04 → 05 → 08** (07 no hace falta). Para la BD existente: basta
-correr **03, 04, 05, 07 y 08** (aditivas/idempotentes; no tocan datos).
+Para una BD nueva: **01 → 02 → 03 → 04 → 05 → 08 → 09** (07 no hace falta). Para la BD
+existente: basta correr **03, 04, 05, 07, 08 y 09** (aditivas/idempotentes; no tocan datos).
 (La migración `06_stock_ventas.sql` se creó y luego **se eliminó**: la regla de stock ventas
 es 100% JS, `getStockVentasPorTalla`, sin vista ni función SQL.)
 
@@ -250,6 +259,9 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
   (implementación lista en código). Hasta que se corra, `viajes.total/costo_envio/direccion`,
   `detalles_pedido.devolucion_de` y los estados `pendiente_devolucion`/`devuelto` no existen
   en la BD y la feature de viajes extras no funciona.
+- **`supabase/09_fechas_devolucion.sql`** ya la corrió el usuario (16/ago/2026):
+  `viajes.fecha_devolucion` existe en la BD y la fecha efectiva de devolución se registra
+  al terminar un recojo.
 - La ruta `detalles/route.ts` devuelve el mensaje de Postgres en errores (útil para debug;
   se puede quitar si prefiere mensajes genéricos).
 - Evaluar bucket de Supabase Storage para `productos.foto_url` (no implementado).

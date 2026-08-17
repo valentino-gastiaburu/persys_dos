@@ -111,6 +111,7 @@ type Viaje = {
   motivo_recojo: string | null;
   estado: string;
   fecha: string | null;
+  fecha_devolucion: string | null;
   direccion: string | null;
   costo_envio: number;
   total: number;
@@ -180,6 +181,20 @@ export default function PedidoDetallePage() {
   );
   const gestionarViajes = !puedeEditar && pedidoEntregado && puedeCrearViajes;
 
+  // Estado final de los productos del pedido: lo que sigue en el pedido (activo)
+  // más lo que está en devolución. Las líneas ocultas se omiten porque son el
+  // espejo "original" de un producto devuelto por completo (ya aparece la línea
+  // del viaje de regreso); el historial del viaje de ida se ve en los viajes.
+  const lineasFinales = viajes
+    .flatMap((v) =>
+      v.lineas.map((l) => ({
+        ...l,
+        viaje_codigo: v.codigo,
+        viaje_tipo: v.tipo,
+      }))
+    )
+    .filter((l) => l.estado !== "oculto");
+
   async function confirmar() {
     setError(null);
     const { error } = await api(`/api/pedidos/${id}/confirmar`, { method: "POST" });
@@ -194,10 +209,16 @@ export default function PedidoDetallePage() {
         : "¿Volver a Solicitar? (revertir de Confirmado a Solicitado)";
     if (!window.confirm(aviso)) return;
     setError(null);
-    const { error } = await api(`/api/pedidos/${id}/estado`, {
-      method: "POST",
-      body: JSON.stringify({ estado: nuevoEstado }),
-    });
+    let url: string;
+    let body: any;
+    if (nuevoEstado === "cancelado") {
+      url = `/api/pedidos/${id}/cancelar`;
+      body = {};
+    } else {
+      url = `/api/pedidos/${id}/estado`;
+      body = JSON.stringify({ estado: nuevoEstado });
+    }
+    const { error } = await api(url, { method: "POST", body });
     if (error) setError(error);
     else cargar();
   }
@@ -294,12 +315,59 @@ export default function PedidoDetallePage() {
                     </table>
                   </div>
                 )
+              ) : lineasFinales.length === 0 ? (
+                <p className="text-sm text-slate-400">Sin productos.</p>
               ) : (
-                <p className="text-sm text-slate-500">
-                  Los productos de este pedido se gestionan desde los{" "}
-                  <span className="font-semibold">viajes</span> de abajo (cada viaje lleva sus propios
-                  productos; las devoluciones aparecen en su viaje de regreso).
-                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse border border-slate-300 text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-300 bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
+                        <th className="border-r border-slate-200 px-3 py-2 font-bold">IMEI</th>
+                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Producto</th>
+                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Talla</th>
+                        <th className="border-r border-slate-200 px-3 py-2 text-right font-bold">Cantidad</th>
+                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Estado</th>
+                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Viaje</th>
+                        <th className="px-3 py-2 text-right font-bold">Costo total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {lineasFinales.map((l) => (
+                        <tr key={l.id}>
+                          <td className="border-r border-slate-200 px-3 py-2 font-mono text-xs text-slate-500">{l.imei}</td>
+                          <td className="border-r border-slate-200 px-3 py-2 font-medium text-slate-800">
+                            {l.producto_nombre}
+                            {l.es_extra_motorizado ? " · +motorizado" : ""}
+                          </td>
+                          <td className="border-r border-slate-200 px-3 py-2 text-slate-600">
+                            {l.entalle
+                              ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                              : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}
+                          </td>
+                          <td className="border-r border-slate-200 px-3 py-2 text-right">
+                            <span className="text-slate-600">{l.cantidad}</span>
+                            <span className="ml-1 text-xs text-slate-400">x S/ {Number(l.precio_unitario).toFixed(2)}</span>
+                          </td>
+                          <td className="border-r border-slate-200 px-3 py-2">
+                            {l.estado === "devuelto" ? (
+                              <Badge color="green">Devuelto</Badge>
+                            ) : l.estado === "pendiente_devolucion" ? (
+                              <Badge color="red">Pendiente de devolución</Badge>
+                            ) : (
+                              <Badge color="blue">En el pedido</Badge>
+                            )}
+                          </td>
+                          <td className="border-r border-slate-200 px-3 py-2 text-xs text-slate-500">
+                            {l.viaje_codigo} · {l.viaje_tipo}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-800">
+                            S/ {Number(l.subtotal).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
               <div className="mt-4 flex justify-between border-t border-slate-300 pt-3 text-sm">
                 <span className="text-slate-500">
@@ -598,6 +666,24 @@ function ViajeCard({ viaje }: { viaje: Viaje }) {
       </div>
       <div className="p-4">
         {viaje.direccion && <p className="mb-2 text-xs text-slate-500">Dirección: {viaje.direccion}</p>}
+        {esRegreso && (
+          <div className="mb-2 flex flex-wrap gap-3 text-xs">
+            <span className="text-slate-500">
+              Programado:{" "}
+              <strong className="text-slate-700">
+                {viaje.fecha ? new Date(viaje.fecha + "T00:00:00").toLocaleDateString("es-PE") : "—"}
+              </strong>
+            </span>
+            {viaje.fecha_devolucion && (
+              <span className="text-emerald-600">
+                Devuelto:{" "}
+                <strong>
+                  {new Date(viaje.fecha_devolucion).toLocaleDateString("es-PE")}
+                </strong>
+              </span>
+            )}
+          </div>
+        )}
         <div className="space-y-1">
           {viaje.lineas.length === 0 ? (
             <p className="text-sm text-slate-400">Sin productos.</p>
@@ -621,11 +707,11 @@ function ViajeCard({ viaje }: { viaje: Viaje }) {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {l.devolucion && (
-                    <Badge color={l.estado === "devuelto" ? "green" : "red"}>
-                      {l.estado === "devuelto" ? "Devuelto" : "Pendiente de devolución"}
-                    </Badge>
-                  )}
+                  {l.estado === "oculto" || l.estado === "devuelto" ? (
+                    <Badge color="green">Devuelto</Badge>
+                  ) : l.devolucion ? (
+                    <Badge color="red">Pendiente de devolución</Badge>
+                  ) : null}
                   <span className="text-sm font-semibold text-slate-800">S/ {Number(l.subtotal).toFixed(2)}</span>
                 </div>
               </div>
@@ -948,6 +1034,7 @@ function ViajeRegresoModal({
   onDone: () => void;
 }) {
   const [motivo, setMotivo] = useState("devolucion");
+  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
   const [lineas, setLineas] = useState<LineaRegreso[]>(() =>
     detalles.map((d) => ({
       detalle_id: d.id,
@@ -989,6 +1076,7 @@ function ViajeRegresoModal({
         pedido_id: pedidoId,
         tipo: "recojo",
         motivo,
+        fecha,
         lineas: elegidas.map((l) => ({
           detalle_id: l.detalle_id,
           cantidad: l.cantidad,
@@ -1022,6 +1110,12 @@ function ViajeRegresoModal({
             <option value="devolucion">Devolución</option>
             <option value="cambio">Cambio</option>
           </Select>
+          <Input
+            label="Fecha programada para la devolución"
+            type="date"
+            value={fecha}
+            onChange={(e) => setFecha(e.target.value)}
+          />
         </div>
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
           Al crear el regreso, los productos salen del viaje de entrega y quedan pendientes de
