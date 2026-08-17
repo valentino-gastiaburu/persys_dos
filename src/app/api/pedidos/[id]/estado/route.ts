@@ -44,6 +44,49 @@ export async function POST(
     );
   }
 
+  // Si se revierte de confirmado a solicitado, cancelar viajes pendientes y devolver stock
+  if (pedido.estado === "confirmado" && nuevoEstado === "solicitado") {
+    const { data: viajesPedido } = await supabase
+      .from("viajes")
+      .select("id, estado")
+      .eq("pedido_id", id);
+
+    const viajesACancelar = (viajesPedido ?? []).filter(
+      (v) => v.estado !== "terminado" && v.estado !== "enviado"
+    );
+
+    const viajeIds = viajesACancelar.map((v) => v.id);
+
+    // Devolver VPU al stock
+    if (viajeIds.length > 0) {
+      const { data: vpus } = await supabase
+        .from("viaje_producto_unicos")
+        .select("producto_unico_id")
+        .in("viaje_id", viajeIds);
+
+      if (vpus && vpus.length > 0) {
+        for (const vpu of vpus) {
+          await supabase
+            .from("productos_unicos")
+            .update({ estado: "en_almacen", fecha_salida: null })
+            .eq("id", vpu.producto_unico_id);
+        }
+      }
+    }
+
+    // Cancelar los viajes
+    for (const v of viajesACancelar) {
+      await supabase.from("viajes").update({ estado: "cancelado" }).eq("id", v.id);
+    }
+
+    // Desvincular detalles del viaje
+    await supabase
+      .from("detalles_pedido")
+      .update({ viaje_id: null })
+      .eq("pedido_id", id)
+      .in("viaje_id", viajeIds);
+  }
+
   const { data: actualizado, error: err } = await supabase
     .from("pedidos")
     .update({ estado: nuevoEstado })

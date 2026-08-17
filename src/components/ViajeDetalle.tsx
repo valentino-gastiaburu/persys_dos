@@ -770,13 +770,15 @@ export default function ViajeDetalle() {
 
                 return slotsVisibles.map((slot, idx) => {
                   const isFirst = idx === 0;
-                  const bgColor = completo
-                    ? "bg-emerald-50"
-                    : slot.tipo === "bd"
-                      ? "bg-blue-50"
-                      : slot.tipo === "local"
-                        ? "bg-amber-50"
-                        : "bg-white";
+                  const bgColor = item.estado === "oculto"
+                    ? "bg-slate-50 opacity-60"
+                    : completo
+                      ? "bg-emerald-50"
+                      : slot.tipo === "bd"
+                        ? "bg-blue-50"
+                        : slot.tipo === "local"
+                          ? "bg-amber-50"
+                          : "bg-white";
 
                   return (
                     <tr key={`${item.detalle_id}-${idx}`} className={`border-b border-slate-200 last:border-b-0 ${bgColor}`}>
@@ -786,7 +788,14 @@ export default function ViajeDetalle() {
                           rowSpan={rowSpan}
                           className="border-r border-b border-slate-200 px-3 py-2 font-mono text-xs text-slate-500 align-middle"
                         >
-                          {item.imei ?? "—"}
+                          <span className={item.estado === "oculto" ? "line-through" : ""}>
+                            {item.imei ?? "—"}
+                          </span>
+                          {item.estado === "oculto" && (
+                            <span className="ml-1 inline-block rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+                              devuelto
+                            </span>
+                          )}
                         </td>
                       )}
                       {/* TALLA — solo primera fila con rowSpan */}

@@ -320,7 +320,7 @@ export async function GET(request: NextRequest) {
       pedidos(codigo, estado, cliente_id, fecha_entrega, direccion_entrega, ciudad, 
         clientes(nombre, apellido, telefono, direccion))
     `)
-    .order("fecha", { ascending: true });
+    .order("actualizado_el", { ascending: false });
 
   if (fecha) query = query.eq("fecha", fecha);
   if (estado) query = query.eq("estado", estado);

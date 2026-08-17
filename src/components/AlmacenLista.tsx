@@ -10,6 +10,7 @@ const ESTADO_BADGE: Record<string, string> = {
   alistado: "purple",
   enviado: "amber",
   terminado: "green",
+  cancelado: "red",
 };
 
 const ESTADO_LABEL: Record<string, string> = {
@@ -17,6 +18,7 @@ const ESTADO_LABEL: Record<string, string> = {
   alistado: "Alistado",
   enviado: "Enviado",
   terminado: "Terminado",
+  cancelado: "Cancelado",
 };
 
 const TIPO_BADGE: Record<string, string> = {
@@ -41,7 +43,101 @@ type Viaje = {
   pedido_codigo: string | null;
   motivo_recojo: string | null;
   unidades_alistadas: number;
+  actualizado_el: string | null;
 };
+
+function ViajeRow({
+  v,
+  esHoy,
+  onClick,
+}: {
+  v: Viaje;
+  esHoy: boolean;
+  onClick: () => void;
+}) {
+  const esCancelado = v.estado === "cancelado";
+  return (
+    <tr
+      onClick={onClick}
+      className={`cursor-pointer border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50 ${
+        esCancelado ? "bg-slate-50 opacity-60" : esHoy ? "bg-blue-50" : ""
+      }`}
+    >
+      <td className={`px-4 py-2 font-semibold text-blue-700 ${esCancelado ? "text-slate-400 line-through" : ""}`}>
+        {v.codigo}
+        {esHoy && (
+          <span className="ml-2 inline-block rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+            Hoy
+          </span>
+        )}
+        {esCancelado && (
+          <span className="ml-2 inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
+            Cancelado
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-2 font-medium text-slate-700">{v.pedido_codigo ?? "—"}</td>
+      <td className="px-4 py-2 text-slate-600">
+        {v.fecha ? new Date(v.fecha + "T00:00:00").toLocaleDateString("es-PE") : "—"}
+      </td>
+      <td className="px-4 py-2 text-slate-700">
+        {v.cliente_nombre ?? "Sin cliente"}
+        {v.cliente_telefono ? ` · ${v.cliente_telefono}` : ""}
+      </td>
+      <td className="px-4 py-2 text-center font-semibold text-slate-700">
+        {v.unidades_alistadas}
+      </td>
+      <td className="px-4 py-2">
+        <Badge color={TIPO_BADGE[v.tipo] ?? "slate"}>
+          {TIPO_LABEL[v.tipo] ?? v.tipo}
+        </Badge>
+        {v.motivo_recojo && <span className="ml-1 text-xs text-amber-600">{v.motivo_recojo}</span>}
+      </td>
+      <td className="px-4 py-2">
+        <Badge color={ESTADO_BADGE[v.estado] ?? "slate"}>
+          {ESTADO_LABEL[v.estado] ?? v.estado}
+        </Badge>
+      </td>
+    </tr>
+  );
+}
+
+function TablaViajes({ viajes, titulo, router, hoy }: { viajes: Viaje[]; titulo: string; router: any; hoy: string }) {
+  if (viajes.length === 0) return null;
+  return (
+    <section className="mb-6">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">{titulo}</h2>
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <th className="px-4 py-2">ID</th>
+              <th className="px-4 py-2">Pedido</th>
+              <th className="px-4 py-2">Fecha</th>
+              <th className="px-4 py-2">Cliente</th>
+              <th className="px-4 py-2 text-center">Productos</th>
+              <th className="px-4 py-2">Tipo</th>
+              <th className="px-4 py-2">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {viajes.map((v) => {
+              const esHoy = v.fecha === hoy;
+              return (
+                <ViajeRow
+                  key={v.id}
+                  v={v}
+                  esHoy={esHoy}
+                  onClick={() => router.push(`/almacen/${v.id}`)}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 
 export default function AlmacenLista() {
   const router = useRouter();
@@ -67,13 +163,10 @@ export default function AlmacenLista() {
     cargar();
   }, [cargar]);
 
-  // Ordenar: primero los viajes de hoy (programados/alistados), luego el resto.
-  const ordenados = [...viajes].sort((a, b) => {
-    const aHoy = a.fecha === hoy && (a.estado === "programado" || a.estado === "alistado") ? 0 : 1;
-    const bHoy = b.fecha === hoy && (b.estado === "programado" || b.estado === "alistado") ? 0 : 1;
-    if (aHoy !== bHoy) return aHoy - bHoy;
-    return (a.fecha ?? "").localeCompare(b.fecha ?? "");
-  });
+  // Separar: hoy vs otros días (orden ya viene del API por actualizado_el desc)
+  const viajesHoy = viajes.filter((v) => v.fecha === hoy && v.estado !== "cancelado");
+  const viajesOtros = viajes.filter((v) => v.fecha !== hoy && v.estado !== "cancelado");
+  const viajesCancelados = viajes.filter((v) => v.estado === "cancelado");
 
   return (
     <div>
@@ -87,6 +180,7 @@ export default function AlmacenLista() {
           <option value="alistado">Alistado</option>
           <option value="enviado">Enviado</option>
           <option value="terminado">Terminado</option>
+          <option value="cancelado">Cancelado</option>
         </Select>
         <button
           className="text-sm text-blue-600 hover:underline"
@@ -102,65 +196,14 @@ export default function AlmacenLista() {
 
       {loading ? (
         <Spinner />
-      ) : ordenados.length === 0 ? (
+      ) : viajes.length === 0 ? (
         <p className="py-10 text-center text-sm text-slate-400">No hay viajes.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-2">ID</th>
-                  <th className="px-4 py-2">Pedido</th>
-                  <th className="px-4 py-2">Fecha</th>
-                  <th className="px-4 py-2">Cliente</th>
-                  <th className="px-4 py-2">Tipo</th>
-                  <th className="px-4 py-2">Estado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ordenados.map((v) => {
-                  const esHoy = v.fecha === hoy && (v.estado === "programado" || v.estado === "alistado");
-                  return (
-                    <tr
-                      key={v.id}
-                      onClick={() => router.push(`/almacen/${v.id}`)}
-                      className={`cursor-pointer border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50 ${
-                        esHoy ? "bg-blue-50" : ""
-                      }`}
-                    >
-                      <td className="px-4 py-2 font-semibold text-blue-700">
-                        {v.codigo}
-                        {esHoy && (
-                          <span className="ml-2 inline-block rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                            Hoy
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 font-medium text-slate-700">{v.pedido_codigo ?? "—"}</td>
-                      <td className="px-4 py-2 text-slate-600">
-                        {v.fecha ? new Date(v.fecha + "T00:00:00").toLocaleDateString("es-PE") : "—"}
-                      </td>
-                      <td className="px-4 py-2 text-slate-700">
-                        {v.cliente_nombre ?? "Sin cliente"}
-                        {v.cliente_telefono ? ` · ${v.cliente_telefono}` : ""}
-                      </td>
-                      <td className="px-4 py-2">
-                        <Badge color={TIPO_BADGE[v.tipo] ?? "slate"}>
-                          {TIPO_LABEL[v.tipo] ?? v.tipo}
-                        </Badge>
-                        {v.motivo_recojo && <span className="ml-1 text-xs text-amber-600">{v.motivo_recojo}</span>}
-                      </td>
-                      <td className="px-4 py-2">
-                        <Badge color={ESTADO_BADGE[v.estado] ?? "slate"}>
-                          {ESTADO_LABEL[v.estado] ?? v.estado}
-                        </Badge>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-          </table>
-        </div>
+        <>
+          <TablaViajes viajes={viajesHoy} titulo="Viajes de hoy" router={router} hoy={hoy} />
+          <TablaViajes viajes={viajesOtros} titulo="Otros viajes" router={router} hoy={hoy} />
+          <TablaViajes viajes={viajesCancelados} titulo="Cancelados" router={router} hoy={hoy} />
+        </>
       )}
     </div>
   );

@@ -116,6 +116,7 @@ type Viaje = {
   direccion: string | null;
   costo_envio: number;
   total: number;
+  creado_el: string | null;
   lineas: ViajeLinea[];
 };
 
@@ -137,6 +138,8 @@ export default function PedidoDetallePage() {
   const [showNuevoViajeEntrega, setShowNuevoViajeEntrega] = useState(false);
   const [showViajeRegreso, setShowViajeRegreso] = useState(false);
   const [inconsistencias, setInconsistencias] = useState<any[]>([]);
+  const [confirmando, setConfirmando] = useState(false);
+  const [cambiandoEstado, setCambiandoEstado] = useState(false);
 
   useEffect(() => {
     api<{ user: { rol: string } }>("/api/auth/me").then(({ data }) => {
@@ -196,11 +199,20 @@ export default function PedidoDetallePage() {
   );
   const gestionarViajes = !puedeEditar && pedidoEntregado && puedeCrearViajes;
 
+  // Viajes ordenados por creado_el descendente (más recientes primero)
+  const viajesActivos = viajes
+    .filter((v) => v.estado !== "cancelado")
+    .sort((a, b) => (b.creado_el ?? "").localeCompare(a.creado_el ?? ""));
+  const viajesCancelados = viajes
+    .filter((v) => v.estado === "cancelado")
+    .sort((a, b) => (b.creado_el ?? "").localeCompare(a.creado_el ?? ""));
+
   // Estado final de los productos del pedido: lo que sigue en el pedido (activo)
   // más lo que está en devolución. Las líneas ocultas se omiten porque son el
   // espejo "original" de un producto devuelto por completo (ya aparece la línea
   // del viaje de regreso); el historial del viaje de ida se ve en los viajes.
   const lineasFinales = viajes
+    .filter((v) => v.estado !== "cancelado")
     .flatMap((v) =>
       v.lineas.map((l) => ({
         ...l,
@@ -211,10 +223,12 @@ export default function PedidoDetallePage() {
     .filter((l) => l.estado !== "oculto");
 
   async function confirmar() {
+    setConfirmando(true);
     setError(null);
     const { error } = await api(`/api/pedidos/${id}/confirmar`, { method: "POST" });
     if (error) setError(error);
-    else cargar();
+    else await cargar();
+    setConfirmando(false);
   }
 
   async function cambiarEstado(nuevoEstado: string) {
@@ -223,6 +237,7 @@ export default function PedidoDetallePage() {
         ? "¿Cancelar este pedido?"
         : "¿Volver a Solicitar? (revertir de Confirmado a Solicitado)";
     if (!window.confirm(aviso)) return;
+    setCambiandoEstado(true);
     setError(null);
     let url: string;
     let body: any;
@@ -235,7 +250,8 @@ export default function PedidoDetallePage() {
     }
     const { error } = await api(url, { method: "POST", body });
     if (error) setError(error);
-    else cargar();
+    else await cargar();
+    setCambiandoEstado(false);
   }
 
   return (
@@ -258,18 +274,20 @@ export default function PedidoDetallePage() {
         </div>
         {puedeConfirmar && (
           <div className="flex gap-2">
-            <Button onClick={confirmar}>Confirmar pedido</Button>
+            <Button onClick={confirmar} disabled={confirmando}>
+              {confirmando ? "CONFIRMANDO..." : "Confirmar pedido"}
+            </Button>
           </div>
         )}
         {puedeCancelar && (
           <div className="flex gap-2">
             {puedeVolverSolicitado && (
-              <Button variant="secondary" onClick={() => cambiarEstado("solicitado")}>
-                Volver a Solicitar
+              <Button variant="secondary" onClick={() => cambiarEstado("solicitado")} disabled={cambiandoEstado}>
+                {cambiandoEstado ? "PROCESANDO..." : "Regresar a 'Solicitado'"}
               </Button>
             )}
-            <Button variant="danger" onClick={() => cambiarEstado("cancelado")}>
-              Cancelar pedido
+            <Button variant="danger" onClick={() => cambiarEstado("cancelado")} disabled={cambiandoEstado}>
+              {cambiandoEstado ? "PROCESANDO..." : "Cancelar pedido"}
             </Button>
           </div>
         )}
@@ -455,9 +473,24 @@ export default function PedidoDetallePage() {
                 </p>
               ) : gestionarViajes ? (
                 <div className="space-y-4">
-                  {viajes.map((v) => (
+                  {viajesActivos.map((v) => (
                     <ViajeCard key={v.id} viaje={v} inconsistencias={inconsistencias.filter((i) => i.entidad_id === v.id)} />
                   ))}
+                  {viajesCancelados.length > 0 && (
+                    <div className="mt-2 border-t border-slate-200 pt-3">
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Cancelados</p>
+                      {viajesCancelados.map((v) => (
+                        <div
+                          key={v.id}
+                          className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs text-slate-400 opacity-60"
+                        >
+                          <span className="line-through">{v.codigo}</span>
+                          <span>{v.tipo}</span>
+                          <Badge color="red">Cancelado</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex flex-wrap justify-end gap-4 rounded-lg bg-slate-50 px-4 py-3 text-sm">
                     <span className="text-slate-500">
                       Total entregas <span className="font-semibold text-emerald-700">S/ {viajesTotal(viajes).toFixed(2)}</span>
@@ -472,23 +505,30 @@ export default function PedidoDetallePage() {
                 </div>
               ) : (
                 <div className="space-y-1">
-                  {viajes.map((v) => (
-                    <Link
-                      key={v.id}
-                      href={`/almacen/${v.id}`}
-                      className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50"
-                    >
-                      <div>
-                        <p className="text-sm font-medium">
-                          {v.codigo} · {v.tipo}
-                        </p>
-                        <p className="text-xs text-slate-400">
-                          {v.fecha ? new Date(v.fecha + "T00:00:00").toLocaleDateString("es-PE") : "Sin fecha"}
-                        </p>
-                      </div>
-                      <Badge color={ESTADO_BADGE[v.estado] ?? "slate"}>{v.estado}</Badge>
-                    </Link>
-                  ))}
+                  {[...viajesActivos, ...viajesCancelados].map((v) => {
+                    const esCancelado = v.estado === "cancelado";
+                    return (
+                      <Link
+                        key={v.id}
+                        href={`/almacen/${v.id}`}
+                        className={`flex items-center justify-between rounded-lg border px-3 py-2 hover:bg-slate-50 ${
+                          esCancelado ? "border-slate-100 bg-slate-50 opacity-50 py-1" : "border-slate-200"
+                        }`}
+                      >
+                        <div>
+                          <p className={`text-sm ${esCancelado ? "line-through text-slate-400" : "font-medium"}`}>
+                            {v.codigo} · {v.tipo}
+                          </p>
+                          {!esCancelado && (
+                            <p className="text-xs text-slate-400">
+                              {v.fecha ? new Date(v.fecha + "T00:00:00").toLocaleDateString("es-PE") : "Sin fecha"}
+                            </p>
+                          )}
+                        </div>
+                        <Badge color={ESTADO_BADGE[v.estado] ?? "slate"}>{v.estado}</Badge>
+                      </Link>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -651,11 +691,11 @@ function PagoModal({
 }
 
 function viajesTotal(viajes: Viaje[]): number {
-  return viajes.filter((v) => v.tipo === "entrega").reduce((a, v) => a + Number(v.total ?? 0), 0);
+  return viajes.filter((v) => v.tipo === "entrega" && v.estado !== "cancelado").reduce((a, v) => a + Number(v.total ?? 0), 0);
 }
 
 function viajesDevoluciones(viajes: Viaje[]): number {
-  return viajes.filter((v) => v.tipo === "recojo").reduce((a, v) => a + Number(v.total ?? 0), 0);
+  return viajes.filter((v) => v.tipo === "recojo" && v.estado !== "cancelado").reduce((a, v) => a + Number(v.total ?? 0), 0);
 }
 
 function ViajeCard({ viaje, inconsistencias }: { viaje: Viaje; inconsistencias?: any[] }) {

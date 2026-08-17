@@ -90,12 +90,12 @@ export async function syncEstadoPedidoPorViajes(pedidoId: string): Promise<strin
 
   if (!viajes || viajes.length === 0) return "confirmado";
 
-  const recojoPendiente = viajes.find((v) => v.tipo === "recojo" && v.estado !== "terminado");
+  const recojoPendiente = viajes.find((v) => v.tipo === "recojo" && v.estado !== "terminado" && v.estado !== "cancelado");
   if (recojoPendiente) {
     return recojoPendiente.motivo_recojo === "cambio" ? "esperando_cambio" : "esperando_devolucion";
   }
 
-  const entregas = viajes.filter((v) => v.tipo === "entrega");
+  const entregas = viajes.filter((v) => v.tipo === "entrega" && v.estado !== "cancelado");
   if (entregas.length === 0) return "confirmado";
   if (entregas.every((v) => v.estado === "terminado")) return "entregado";
 
@@ -113,7 +113,8 @@ export async function calcularTotalPedido(pedidoId: string): Promise<number> {
   const { data: viajes } = await supabase
     .from("viajes")
     .select("tipo, total")
-    .eq("pedido_id", pedidoId);
+    .eq("pedido_id", pedidoId)
+    .neq("estado", "cancelado");
   let total = 0;
   for (const v of viajes ?? []) {
     const t = Number(v.total ?? 0);
@@ -240,26 +241,41 @@ export async function confirmarPedido(
     Number(pedido.costo_envio ?? 0)
   );
 
-  const viajeCodigo = await generarCodigoViaje();
-
-  const { data: viaje, error: viajeErr } = await supabase
+  // Reusar viaje existente si ya hay uno no enviado (protección contra doble click / re-confirmación)
+  const { data: viajeExistente } = await supabase
     .from("viajes")
-    .insert({
-      codigo: viajeCodigo,
-      pedido_id: id,
-      tipo: "entrega",
-      estado: "programado",
-      fecha: pedido.fecha_entrega,
-      direccion: pedido.direccion_entrega,
-      costo_envio: Number(pedido.costo_envio ?? 0),
-      total: montoTotal,
-      creado_por: userId,
-    })
-    .select()
+    .select("id, codigo")
+    .eq("pedido_id", id)
+    .in("estado", ["programado", "alistado"])
+    .limit(1)
     .single();
 
-  if (viajeErr || !viaje) {
-    return { error: "No se pudo crear el viaje" };
+  let viaje: any;
+
+  if (viajeExistente) {
+    viaje = viajeExistente;
+  } else {
+    const viajeCodigo = await generarCodigoViaje();
+    const { data: nuevoViaje, error: viajeErr } = await supabase
+      .from("viajes")
+      .insert({
+        codigo: viajeCodigo,
+        pedido_id: id,
+        tipo: "entrega",
+        estado: "programado",
+        fecha: pedido.fecha_entrega,
+        direccion: pedido.direccion_entrega,
+        costo_envio: Number(pedido.costo_envio ?? 0),
+        total: montoTotal,
+        creado_por: userId,
+      })
+      .select()
+      .single();
+
+    if (viajeErr || !nuevoViaje) {
+      return { error: "No se pudo crear el viaje" };
+    }
+    viaje = nuevoViaje;
   }
 
   await supabase

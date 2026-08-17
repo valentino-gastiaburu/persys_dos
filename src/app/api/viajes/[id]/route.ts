@@ -35,7 +35,6 @@ export async function GET(
       tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
     `)
     .eq("viaje_id", id)
-    .not("estado", "eq", "oculto")
     .order("creado_el");
 
   // Unidades ya alistadas en este viaje

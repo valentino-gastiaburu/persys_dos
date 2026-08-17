@@ -113,7 +113,7 @@ async function getConteoPorTalla() {
   const { data: unidades } = await supabase
     .from("productos_unicos")
     .select("producto_id, talla_id")
-    .neq("estado", "eliminado");
+    .eq("estado", "en_almacen");
   const conteo: Record<string, number> = {};
   for (const u of unidades ?? []) {
     if (!u.talla_id) continue;
