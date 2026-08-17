@@ -10,7 +10,8 @@ type TipoInconsistencia =
   | "pedido_fecha_entrega"
   | "viaje_devolucion_passada"
   | "pago_fecha_passada"
-  | "detalle_devolucion_horfana";
+  | "detalle_devolucion_horfana"
+  | "viaje_exceso_alistado";
 
 type Inconsistencia = {
   id: string;
@@ -33,6 +34,7 @@ export default function InconsistenciasPanel() {
     "viaje_devolucion_passada",
     "pago_fecha_passada",
     "detalle_devolucion_horfana",
+    "viaje_exceso_alistado",
   ]);
 
   const [inconsistencias, setInconsistencias] = useState<Inconsistencia[]>([]);
@@ -111,7 +113,9 @@ export default function InconsistenciasPanel() {
                 ? "Viaje devolución pasada"
                 : t === "pago_fecha_passada"
                   ? "Pago fecha vencida"
-                  : "Detalle devoluc. huérfana"}
+                  : t === "viaje_exceso_alistado"
+                    ? "Exceso alistado"
+                    : "Detalle devoluc. huérfana"}
         </Button>
         ))}
       </div>
@@ -143,7 +147,9 @@ export default function InconsistenciasPanel() {
                           ? "Viaje devolución pasada"
                           : i.tipo === "pago_fecha_passada"
                             ? "Pago fecha vencida"
-                            : "Detalle devoluc. huérfana"}
+                            : i.tipo === "viaje_exceso_alistado"
+                              ? "Exceso alistado"
+                              : "Detalle devoluc. huérfana"}
                   </td>
                   <td className="px-4 py-2 font-medium text-slate-800">{i.descripcion}</td>
                   <td className="px-4 py-2 text-slate-500">

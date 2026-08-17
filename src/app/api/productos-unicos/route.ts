@@ -13,7 +13,7 @@ export async function GET() {
   const { data, error: dbError } = await supabase
     .from("productos_unicos")
     .select(
-      "id, codigo_qr, estado, fecha_ingreso, productos(imei, nombre), tallas!productos_unicos_talla_id_fkey(nombre)"
+      "id, codigo_qr, estado, fecha_ingreso, producto_id, productos(imei, nombre), tallas!productos_unicos_talla_id_fkey(nombre)"
     )
     .neq("estado", "eliminado")
     .order("fecha_ingreso", { ascending: false });

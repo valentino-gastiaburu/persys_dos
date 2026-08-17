@@ -39,6 +39,7 @@ const VIAJE_ESTADO_LABEL: Record<string, string> = {
   alistado: "Alistado",
   enviado: "Enviado",
   terminado: "Terminado",
+  cancelado: "Cancelado",
 };
 
 type Pedido = {
@@ -135,6 +136,7 @@ export default function PedidoDetallePage() {
   const [showEditarProductos, setShowEditarProductos] = useState(false);
   const [showNuevoViajeEntrega, setShowNuevoViajeEntrega] = useState(false);
   const [showViajeRegreso, setShowViajeRegreso] = useState(false);
+  const [inconsistencias, setInconsistencias] = useState<any[]>([]);
 
   useEffect(() => {
     api<{ user: { rol: string } }>("/api/auth/me").then(({ data }) => {
@@ -158,6 +160,19 @@ export default function PedidoDetallePage() {
       setPagos(data?.pagos ?? []);
       setViajes(data?.viajes ?? []);
       setTotalPagado(data?.total_pagado ?? 0);
+
+      const viajeIds = (data?.viajes ?? []).map((v: any) => v.id);
+      if (viajeIds.length > 0) {
+        const { data: incData } = await api<{ inconsistencias: any[] }>("/api/inconsistencias?limit=200");
+        const viajeIdsSet = new Set(viajeIds);
+        setInconsistencias(
+          (incData?.inconsistencias ?? []).filter(
+            (i: any) => viajeIdsSet.has(i.entidad_id) && !i.resuelto
+          )
+        );
+      } else {
+        setInconsistencias([]);
+      }
     }
     setLoading(false);
   }, [id]);
@@ -176,7 +191,7 @@ export default function PedidoDetallePage() {
   const puedeEditar = ["borrador", "solicitado", "confirmado", "alistado"].includes(pedido.estado);
   const puedeCrearViajes =
     rol != null && ["vendedora", "agendadora", "controller", "admin"].includes(rol);
-  const pedidoEntregado = ["entregado", "esperando_devolucion", "esperando_cambio", "cerrado"].includes(
+  const pedidoEntregado = ["enviado", "entregado", "esperando_devolucion", "esperando_cambio", "cerrado"].includes(
     pedido.estado
   );
   const gestionarViajes = !puedeEditar && pedidoEntregado && puedeCrearViajes;
@@ -441,7 +456,7 @@ export default function PedidoDetallePage() {
               ) : gestionarViajes ? (
                 <div className="space-y-4">
                   {viajes.map((v) => (
-                    <ViajeCard key={v.id} viaje={v} />
+                    <ViajeCard key={v.id} viaje={v} inconsistencias={inconsistencias.filter((i) => i.entidad_id === v.id)} />
                   ))}
                   <div className="flex flex-wrap justify-end gap-4 rounded-lg bg-slate-50 px-4 py-3 text-sm">
                     <span className="text-slate-500">
@@ -643,10 +658,11 @@ function viajesDevoluciones(viajes: Viaje[]): number {
   return viajes.filter((v) => v.tipo === "recojo").reduce((a, v) => a + Number(v.total ?? 0), 0);
 }
 
-function ViajeCard({ viaje }: { viaje: Viaje }) {
+function ViajeCard({ viaje, inconsistencias }: { viaje: Viaje; inconsistencias?: any[] }) {
   const esRegreso = viaje.tipo === "recojo";
+  const tieneInconsistencia = (inconsistencias ?? []).length > 0;
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200">
+    <div className={`overflow-hidden rounded-xl border ${tieneInconsistencia ? "border-red-400 ring-2 ring-red-200" : "border-slate-200"}`}>
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
         <Link href={`/almacen/${viaje.id}`} className="text-sm font-semibold text-blue-600 hover:underline">
           {viaje.codigo}
@@ -665,6 +681,14 @@ function ViajeCard({ viaje }: { viaje: Viaje }) {
         </span>
       </div>
       <div className="p-4">
+        {tieneInconsistencia && (
+          <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p className="font-semibold">⚠ Hay productos demás</p>
+            {inconsistencias!.map((inc: any) => (
+              <p key={inc.id}>{inc.descripcion}</p>
+            ))}
+          </div>
+        )}
         {viaje.direccion && <p className="mb-2 text-xs text-slate-500">Dirección: {viaje.direccion}</p>}
         {esRegreso && (
           <div className="mb-2 flex flex-wrap gap-3 text-xs">

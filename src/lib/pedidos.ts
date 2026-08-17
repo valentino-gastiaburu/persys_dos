@@ -304,3 +304,90 @@ export async function confirmarPedido(
 
   return { pedido: confirmado, viaje };
 }
+
+// Recalcula el estado de un viaje de entrega a partir de sus detalles vs unidades
+// alistadas (viaje_producto_unicos). Si todas las líneas están cubiertas → alistado.
+// Si hay más unidades alistadas de las necesarias → crea inconsistencia.
+export async function recalcularEstadoViaje(viajeId: string): Promise<void> {
+  const supabase = getSupabase();
+
+  const { data: viaje } = await supabase
+    .from("viajes")
+    .select("id, pedido_id, estado")
+    .eq("id", viajeId)
+    .single();
+  if (!viaje || viaje.estado === "enviado" || viaje.estado === "terminado" || viaje.estado === "cancelado") return;
+
+  // Detalles activos del viaje (excluye ocultos/devueltos)
+  const { data: detalles } = await supabase
+    .from("detalles_pedido")
+    .select("id, cantidad, producto_id")
+    .eq("viaje_id", viajeId)
+    .not("estado", "eq", "oculto")
+    .not("estado", "eq", "devuelto");
+
+  // Unidades alistadas en el viaje
+  const { data: alistados } = await supabase
+    .from("viaje_producto_unicos")
+    .select("id, detalle_pedido_id")
+    .eq("viaje_id", viajeId);
+
+  // Contar alistados por detalle
+  const cntPorDetalle: Record<string, number> = {};
+  for (const a of alistados ?? []) {
+    cntPorDetalle[a.detalle_pedido_id] = (cntPorDetalle[a.detalle_pedido_id] ?? 0) + 1;
+  }
+
+  const totalRequerido = (detalles ?? []).reduce((s, d) => s + Number(d.cantidad), 0);
+  const totalAlistado = (alistados ?? []).length;
+
+  // ¿Hay exceso? (más unidades alistadas de las que piden los detalles activos)
+  if (totalAlistado > totalRequerido && totalRequerido > 0) {
+    const exceso = totalAlistado - totalRequerido;
+    const { data: existente } = await supabase
+      .from("inconsistencias")
+      .select("id")
+      .eq("entidad_id", viajeId)
+      .eq("tipo", "viaje_exceso_alistado")
+      .eq("resuelto", false)
+      .maybeSingle();
+
+    if (!existente) {
+      await supabase.from("inconsistencias").insert({
+        tipo: "viaje_exceso_alistado",
+        entidad_id: viajeId,
+        descripcion: `El viaje tiene ${totalAlistado} unidades alistadas pero el pedido solo pide ${totalRequerido}. Retira ${exceso} unidad(es) sobrante(s).`,
+        metadata: {
+          pedido_id: viaje.pedido_id,
+          total_alistado: totalAlistado,
+          total_requerido: totalRequerido,
+          exceso,
+        },
+      });
+    }
+  } else if (totalAlistado <= totalRequerido && totalAlistado > 0) {
+    await supabase
+      .from("inconsistencias")
+      .update({ resuelto: true })
+      .eq("entidad_id", viajeId)
+      .eq("tipo", "viaje_exceso_alistado")
+      .eq("resuelto", false);
+  }
+
+  // ¿Todas las líneas cubiertas? → viaje pasa a alistado
+  let todasCubiertas = true;
+  for (const d of detalles ?? []) {
+    const cubiertas = cntPorDetalle[d.id] ?? 0;
+    if (cubiertas < Number(d.cantidad)) {
+      todasCubiertas = false;
+      break;
+    }
+  }
+
+  if (todasCubiertas && (detalles?.length ?? 0) > 0 && viaje.estado === "programado") {
+    await supabase.from("viajes").update({ estado: "alistado" }).eq("id", viajeId);
+  }
+
+  // Sincronizar estado del pedido
+  await syncEstadoPedidoPorViajes(viaje.pedido_id);
+}

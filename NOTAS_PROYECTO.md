@@ -265,3 +265,6 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - La ruta `detalles/route.ts` devuelve el mensaje de Postgres en errores (útil para debug;
   se puede quitar si prefiere mensajes genéricos).
 - Evaluar bucket de Supabase Storage para `productos.foto_url` (no implementado).
+- **⚠️ Caché de Turbopack**: Si cambiaste código en `src/lib/` y el cambio no se refleja
+  en runtime, **reiniciar `next dev`**. Turbopack a veces no recarga módulos importados
+  por API routes durante hot-reload. Causó debugging innecesario el 16/ago/2026.

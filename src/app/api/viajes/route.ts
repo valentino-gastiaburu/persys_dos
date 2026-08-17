@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
   }
 
   // tipo === "recojo"
-  if (!["entregado", "esperando_devolucion", "esperando_cambio", "cerrado"].includes(pedido.estado)) {
+  if (!["enviado", "entregado", "esperando_devolucion", "esperando_cambio", "cerrado"].includes(pedido.estado)) {
     return Response.json(
       { error: "Solo se pueden registrar devoluciones en pedidos ya entregados" },
       { status: 400 }
@@ -189,22 +189,55 @@ export async function POST(request: NextRequest) {
     const d: any = porId.get(l.detalle_id);
     const precioDev = Number(l.precio_devolucion ?? d.precio_unitario);
     const cant = Number(l.cantidad);
-    await supabase.from("detalles_pedido").insert({
-      pedido_id: pedido.id,
-      viaje_id: viaje.id,
-      devolucion_de: d.id,
-      producto_id: d.producto_id,
-      talla_stock: d.talla_stock,
-      talla_vendida: d.talla_vendida,
-      entalle: d.entalle,
-      cantidad: cant,
-      precio_unitario: precioDev,
-      subtotal: cant * precioDev,
-      genero: d.genero,
-      es_extra_motorizado: d.es_extra_motorizado,
-      estado: "pendiente_devolucion",
-      anadido_por: user.id,
-    });
+
+    // Insertar detalle del recojo y capturar su ID para vincular VPU
+    const { data: nuevoDetalle } = await supabase
+      .from("detalles_pedido")
+      .insert({
+        pedido_id: pedido.id,
+        viaje_id: viaje.id,
+        devolucion_de: d.id,
+        producto_id: d.producto_id,
+        talla_stock: d.talla_stock,
+        talla_vendida: d.talla_vendida,
+        entalle: d.entalle,
+        cantidad: cant,
+        precio_unitario: precioDev,
+        subtotal: cant * precioDev,
+        genero: d.genero,
+        es_extra_motorizado: d.es_extra_motorizado,
+        estado: "pendiente_devolucion",
+        anadido_por: user.id,
+      })
+      .select("id")
+      .single();
+
+    // Pre-popular viaje_producto_unicos: buscar los productos únicos que fueron
+    // entregados originalmente para este detalle y asignarlos como "pendientes"
+    // de devolución en el viaje de recojo.
+    if (d.viaje_id && nuevoDetalle) {
+      const { data: vpuOriginales } = await supabase
+        .from("viaje_producto_unicos")
+        .select("producto_unico_id")
+        .eq("viaje_id", d.viaje_id)
+        .eq("detalle_pedido_id", d.id)
+        .eq("estado", "enviado");
+
+      // Tomar solo los que coincidan con la cantidad a devolver
+      const aDevolver = (vpuOriginales ?? []).slice(0, cant);
+      if (aDevolver.length > 0) {
+        await supabase.from("viaje_producto_unicos").insert(
+          aDevolver.map((vpu) => ({
+            viaje_id: viaje.id,
+            producto_unico_id: vpu.producto_unico_id,
+            detalle_pedido_id: nuevoDetalle.id,
+            estado: "pendiente" as const,
+            alistado_por: user.id,
+          }))
+        );
+      }
+    }
+
     const nuevaCant = Number(d.cantidad) - cant;
     if (nuevaCant <= 0) {
       // Devuelto todo: la línea queda oculta (sale del pedido) pero conserva su

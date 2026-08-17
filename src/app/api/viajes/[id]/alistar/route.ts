@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { recalcularEstadoViaje } from "@/lib/pedidos";
 
 // POST /api/viajes/[id]/alistar
 // Escaneo de QR: asigna un producto_unico al viaje.
@@ -184,6 +185,8 @@ export async function POST(
       ? `Entallado para viaje ${viaje.id}`
       : `Alistado para viaje ${viaje.id}`,
   });
+
+  await recalcularEstadoViaje(id);
 
   return Response.json({
     vpu,

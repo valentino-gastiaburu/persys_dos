@@ -3,6 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 import { sincronizarTotalesPedido } from "@/lib/pedidos";
 import { getStockVentasPorTalla } from "@/lib/productos";
+import { recalcularEstadoViaje } from "@/lib/pedidos";
 
 // PATCH /api/pedidos/[id]/detalles/[detalleId] — editar cantidad/precio/entalle
 // DELETE — borrado lógico (estado = oculto)
@@ -95,6 +96,11 @@ export async function PATCH(
   const montoTotal = await sincronizarTotalesPedido(id);
   await supabase.from("pedidos").update({ monto_total: montoTotal }).eq("id", id);
 
+  // Recalcular estado del viaje (¿todas las líneas cubiertas? ¿exceso de alistado?)
+  if (detalle.viaje_id) {
+    await recalcularEstadoViaje(detalle.viaje_id);
+  }
+
   return Response.json({ detalle: actualizado, monto_total: montoTotal });
 }
 
@@ -131,6 +137,11 @@ export async function DELETE(
 
   const montoTotal = await sincronizarTotalesPedido(id);
   await supabase.from("pedidos").update({ monto_total: montoTotal }).eq("id", id);
+
+  // Recalcular estado del viaje tras quitar línea
+  if (detalle.viaje_id) {
+    await recalcularEstadoViaje(detalle.viaje_id);
+  }
 
   return Response.json({ ok: true, monto_total: montoTotal });
 }

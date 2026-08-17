@@ -3,6 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 import { sincronizarTotalesPedido } from "@/lib/pedidos";
 import { getStockVentasPorTalla } from "@/lib/productos";
+import { recalcularEstadoViaje } from "@/lib/pedidos";
 
 // POST /api/pedidos/[id]/detalles — agrega un detalle al pedido (borrador)
 export async function POST(
@@ -92,6 +93,10 @@ export async function POST(
 
   const montoTotal = await sincronizarTotalesPedido(id);
   await supabase.from("pedidos").update({ monto_total: montoTotal }).eq("id", id);
+
+  if (viaje) {
+    await recalcularEstadoViaje(viaje.id);
+  }
 
   return Response.json({ detalle, monto_total: montoTotal }, { status: 201 });
 }

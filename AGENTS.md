@@ -18,3 +18,11 @@ Leer también `DOCUMENTO_FUNCIONAL.md` (raíz del proyecto): **viaje del usuario
 estados y lógicas de negocio** definidos por el usuario. Si el código contradice ese
 documento, es una inconsistencia y hay que plantearla. Mantenerlo actualizado cuando el
 usuario defina nuevos flujos o reglas.
+
+## Reglas de troubleshooting
+
+- **Caché de Turbopack**: Si cambiaste código de `lib/` (archivos importados por API routes o
+  componentes) y el cambio no se refleja en runtime, **sospechá de la caché**. Turbopack a
+  veces no recarga módulos de `lib/` correctamente durante hot reload. Solución: matar el
+  proceso `next dev` y levantarlo de nuevo. Esto ya causó ~30 min de debugging perdidos porque
+  el código era correcto pero el server ejecutaba versión vieja.

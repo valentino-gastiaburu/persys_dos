@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { recalcularEstadoViaje } from "@/lib/pedidos";
 
 // POST /api/viajes/[id]/alistar/batch
 // Guarda múltiples unidades alistadas de una vez (batch).
@@ -152,6 +153,9 @@ export async function POST(
       continue;
     }
 
+    // Actualizar contador intra-batch para no exceder cantidad del detalle
+    contador[detalleElegido.id] = (contador[detalleElegido.id] ?? 0) + 1;
+
     // Actualizar el único
     await supabase
       .from("productos_unicos")
@@ -177,7 +181,6 @@ export async function POST(
 
     // Marcar como alistado en el set (para evitar duplicados dentro del mismo batch)
     yaAlistadosSet.add(unico.id);
-    contador[detalleElegido.id] = (contador[detalleElegido.id] ?? 0) + 1;
 
     guardados.push({
       codigo_qr: codigoQr,
@@ -186,21 +189,13 @@ export async function POST(
     });
   }
 
-  // Verificar si todas las unidades del viaje están alistadas
-  const todasCompletas = detalles.every(
-    (d) => (contador[d.id] ?? 0) >= Number(d.cantidad)
-  );
-
-  let viajeAlistado = false;
-  if (todasCompletas && viaje.estado === "programado") {
-    await supabase.from("viajes").update({ estado: "alistado" }).eq("id", id);
-    viajeAlistado = true;
-  }
+  // Recalcular estado del viaje (alistado si todas cubiertas, inconsistencias si exceso)
+  const eraProgramado = viaje.estado === "programado";
+  await recalcularEstadoViaje(id);
 
   return Response.json({
     guardados,
     errores,
-    viaje_alistado: viajeAlistado,
-    todas_completas: todasCompletas,
+    viaje_alistado: eraProgramado,
   }, { status: 201 });
 }

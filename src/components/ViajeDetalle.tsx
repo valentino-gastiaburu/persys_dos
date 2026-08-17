@@ -35,7 +35,9 @@ type Item = {
 type Alistado = {
   id: string;
   detalle_pedido_id: string | null;
+  estado: string;
   productos_unicos: {
+    id?: string;
     codigo_qr: string;
     talla_id: string | null;
     talla_original: string | null;
@@ -308,6 +310,201 @@ export default function ViajeDetalle() {
     (i) => i.alistados + pendientes.filter((p) => p.detalle_id === i.detalle_id).length < i.cantidad
   );
   const activo = viaje.estado === "programado" || viaje.estado === "alistado";
+
+  // ─── FLUJO RECOJO ────────────────────────────────────────────────────────
+  if (viaje.tipo === "recojo") {
+    const pendientes = alistados.filter((a) => a.estado === "pendiente");
+    const devueltos = alistados.filter((a) => a.estado === "devuelto");
+    const totalEsperados = alistados.length;
+    const totalDevueltos = devueltos.length;
+    const todosDevueltos = totalEsperados > 0 && totalDevueltos === totalEsperados;
+    const recojoActivo = viaje.estado === "programado" || viaje.estado === "alistado";
+
+    async function escanearRetorno(codigoQr: string) {
+      setMsg(null);
+      const { data, error } = await api<{
+        ok: boolean;
+        producto_devuelto?: { id: string; codigo_qr: string };
+        pendientes_restantes: number;
+        completado: boolean;
+        error?: string;
+      }>(`/api/viajes/${id}/retorno`, {
+        method: "POST",
+        body: JSON.stringify({ codigo_qr: codigoQr }),
+      });
+      if (error) {
+        setMsg({ tipo: "err", texto: error });
+        return;
+      }
+      setMsg({
+        tipo: "ok",
+        texto: `Producto devuelto al almacén · Quedan ${data?.pendientes_restantes ?? 0} pendiente(s)`,
+      });
+      cargar();
+    }
+
+    async function iniciarScannerRetorno() {
+      setScannerActivo(true);
+      setMsg(null);
+      try {
+        const scanner = new Html5Qrcode(scannerDivId);
+        scannerRef.current = scanner;
+        await scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText) => {
+            escanearRetorno(decodedText);
+            detenerScanner();
+          },
+          () => {}
+        );
+      } catch {
+        setScannerActivo(false);
+        setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos." });
+      }
+    }
+
+    return (
+      <div>
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Link href="/almacen" className="text-sm text-blue-600 hover:underline">
+                ← Almacén
+              </Link>
+              <span className="text-slate-300">/</span>
+              <h1 className="text-2xl font-bold text-slate-800">{viaje.codigo}</h1>
+              <Badge color={ESTADO_BADGE[viaje.estado] ?? "slate"}>{viaje.estado}</Badge>
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              Recojo · Pedido {pedidoCodigo ?? "—"} · {clienteNombre ?? "Sin cliente"}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-sm text-slate-600">
+              Devueltos:{" "}
+              <strong className={todosDevueltos ? "text-emerald-600" : "text-amber-600"}>
+                {totalDevueltos}/{totalEsperados}
+              </strong>
+            </p>
+          </div>
+        </div>
+
+        {msg && (
+          <div
+            className={`mb-4 rounded-lg border px-4 py-2 text-sm ${
+              msg.tipo === "ok"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-red-200 bg-red-50 text-red-700"
+            }`}
+          >
+            {msg.texto}
+          </div>
+        )}
+
+        {/* Botón escanear */}
+        {recojoActivo && !todosDevueltos && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            {!scannerActivo ? (
+              <Button onClick={iniciarScannerRetorno}>📷 Escanear producto</Button>
+            ) : (
+              <Button variant="danger" onClick={detenerScanner}>
+                Detener cámara
+              </Button>
+            )}
+          </div>
+        )}
+
+        {scannerActivo && (
+          <div className="mb-4">
+            <div id={scannerDivId} className="overflow-hidden rounded-lg bg-black" />
+          </div>
+        )}
+
+        {/* Lista de productos esperados */}
+        <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+            <h2 className="text-sm font-semibold text-slate-700">
+              Productos a recoger ({totalDevueltos}/{totalEsperados})
+            </h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-2">IMEI</th>
+                  <th className="px-4 py-2">TALLA</th>
+                  <th className="px-4 py-2">ESTADO</th>
+                  <th className="px-4 py-2">ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alistados.map((a) => {
+                  const esDevuelto = a.estado === "devuelto";
+                  return (
+                    <tr
+                      key={a.id}
+                      className={`border-b border-slate-100 last:border-0 ${
+                        esDevuelto ? "bg-emerald-50" : "bg-white"
+                      }`}
+                    >
+                      <td className="px-4 py-2 font-mono text-xs text-slate-500">
+                        {a.productos_unicos?.productos?.imei ?? "—"}
+                      </td>
+                      <td className="px-4 py-2 font-medium text-slate-800">
+                        {a.productos_unicos?.tallas?.nombre ?? "—"}
+                      </td>
+                      <td className="px-4 py-2">
+                        {esDevuelto ? (
+                          <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                            devuelto
+                          </span>
+                        ) : (
+                          <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                            pendiente
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-slate-500">
+                        {a.productos_unicos?.codigo_qr ?? "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {alistados.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-4 text-center text-sm text-slate-400">
+                      No hay productos registrados para este recojo.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Acciones */}
+        {activo && (
+          <div className="flex flex-wrap gap-2">
+            {viaje.estado === "programado" && (
+              <Button onClick={() => cambiarEstado("alistado")} disabled={!todosDevueltos}>
+                Marcar como alistado
+              </Button>
+            )}
+            {viaje.estado === "alistado" && (
+              <Button onClick={() => cambiarEstado("enviado")}>Enviar viaje</Button>
+            )}
+            {viaje.estado === "enviado" && (
+              <Button variant="success" onClick={() => cambiarEstado("terminado")}>
+                Registrar devolución
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+  // ─── FIN FLUJO RECOJO ──────────────────────────────────────────────────
 
   // Unidades alistadas combinadas: las de BD + las pendientes
   const unidadesAlistadas = [
