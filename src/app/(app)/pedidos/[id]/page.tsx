@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
@@ -94,8 +94,11 @@ type Pago = { id: string; monto: number; metodo_pago: string; tipo: string; fech
 type ViajeLinea = {
   id: string;
   imei: string;
+  producto_id: string;
   producto_nombre: string;
+  talla_stock: string | null;
   talla_stock_nombre: string | null;
+  talla_vendida: string | null;
   talla_vendida_nombre: string | null;
   cantidad: number;
   precio_unitario: number;
@@ -104,6 +107,8 @@ type ViajeLinea = {
   es_extra_motorizado: boolean;
   estado: string;
   devolucion: boolean;
+  genero: string | null;
+  devolucion_de: string | null;
 };
 type Viaje = {
   id: string;
@@ -137,6 +142,8 @@ export default function PedidoDetallePage() {
   const [showEditarProductos, setShowEditarProductos] = useState(false);
   const [showNuevoViajeEntrega, setShowNuevoViajeEntrega] = useState(false);
   const [showViajeRegreso, setShowViajeRegreso] = useState(false);
+  const [editarViaje, setEditarViaje] = useState<Viaje | null>(null);
+  const [cancelarViajeId, setCancelarViajeId] = useState<string | null>(null);
   const [inconsistencias, setInconsistencias] = useState<any[]>([]);
   const [confirmando, setConfirmando] = useState(false);
   const [cambiandoEstado, setCambiandoEstado] = useState(false);
@@ -206,6 +213,22 @@ export default function PedidoDetallePage() {
   const viajesCancelados = viajes
     .filter((v) => v.estado === "cancelado")
     .sort((a, b) => (b.creado_el ?? "").localeCompare(a.creado_el ?? ""));
+
+  // Detalles que ya fueron enviados al cliente (en viaje de entrega enviado/terminado).
+  // Solo estos son elegibles para devolución/cambio.
+  const detallesEnviados = (() => {
+    const enviados = new Set<string>();
+    for (const v of viajes) {
+      if (v.tipo !== "entrega") continue;
+      if (v.estado !== "enviado" && v.estado !== "terminado") continue;
+      for (const l of v.lineas) {
+        if (l.estado !== "oculto" && l.estado !== "devuelto") {
+          enviados.add(l.id);
+        }
+      }
+    }
+    return detalles.filter((d) => enviados.has(d.id));
+  })();
 
   // Estado final de los productos del pedido: lo que sigue en el pedido (activo)
   // más lo que está en devolución. Las líneas ocultas se omiten porque son el
@@ -474,7 +497,13 @@ export default function PedidoDetallePage() {
               ) : gestionarViajes ? (
                 <div className="space-y-4">
                   {viajesActivos.map((v) => (
-                    <ViajeCard key={v.id} viaje={v} inconsistencias={inconsistencias.filter((i) => i.entidad_id === v.id)} />
+                    <ViajeCard
+                      key={v.id}
+                      viaje={v}
+                      inconsistencias={inconsistencias.filter((i) => i.entidad_id === v.id)}
+                      onEdit={(vj) => setEditarViaje(vj)}
+                      onCancel={(vj) => setCancelarViajeId(vj.id)}
+                    />
                   ))}
                   {viajesCancelados.length > 0 && (
                     <div className="mt-2 border-t border-slate-200 pt-3">
@@ -619,7 +648,7 @@ export default function PedidoDetallePage() {
       {showViajeRegreso && (
         <ViajeRegresoModal
           pedidoId={id}
-          detalles={detalles}
+          detalles={detallesEnviados}
           onClose={() => setShowViajeRegreso(false)}
           onDone={() => {
             setShowViajeRegreso(false);
@@ -627,7 +656,514 @@ export default function PedidoDetallePage() {
           }}
         />
       )}
+      {editarViaje && (
+        <EditarViajeModal
+          viaje={editarViaje}
+          pedidoId={id}
+          detallesEnviados={detallesEnviados}
+          onClose={() => setEditarViaje(null)}
+          onDone={() => {
+            setEditarViaje(null);
+            cargar();
+          }}
+        />
+      )}
+      {cancelarViajeId && (
+        <CancelarViajeModal
+          viajeId={cancelarViajeId}
+          onClose={() => setCancelarViajeId(null)}
+          onDone={() => {
+            setCancelarViajeId(null);
+            cargar();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function CancelarViajeModal({
+  viajeId,
+  onClose,
+  onDone,
+}: {
+  viajeId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function cancelar() {
+    setLoading(true);
+    const { error: e } = await api(`/api/viajes/${viajeId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ estado: "cancelado" }),
+    });
+    setLoading(false);
+    if (e) setError(e);
+    else onDone();
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Cancelar viaje"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Volver</Button>
+          <Button variant="danger" onClick={cancelar} disabled={loading}>
+            {loading ? "Cancelando..." : "Sí, cancelar viaje"}
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-slate-600">
+        Se cancelará el viaje. Si ya hay productos alistados, volverán al stock del almacén.
+      </p>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </Modal>
+  );
+}
+
+function EditarViajeModal({
+  viaje,
+  pedidoId,
+  detallesEnviados,
+  onClose,
+  onDone,
+}: {
+  viaje: Viaje;
+  pedidoId: string;
+  detallesEnviados: Detalle[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [fecha, setFecha] = useState(viaje.fecha ?? new Date().toISOString().slice(0, 10));
+  const [direccion, setDireccion] = useState(viaje.direccion ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const esProgramado = viaje.estado === "programado";
+  const esRecojo = viaje.tipo === "recojo";
+  const puedeEditarProductos = esRecojo || viaje.tipo === "entrega";
+  const [productos, setProductos] = useState<{ id: string; imei: string; nombre: string }[]>([]);
+  const [tallasPorProducto, setTallasPorProducto] = useState<
+    Record<string, { id: string; nombre: string; cantidad_ventas: number }[]>
+  >({});
+  const [productoId, setProductoId] = useState("");
+  const [tallaStock, setTallaStock] = useState("");
+  const [entalle, setEntalle] = useState(false);
+  const [tallaVendida, setTallaVendida] = useState("");
+  const [cantidad, setCantidad] = useState("1");
+  const [precio, setPrecio] = useState("");
+  const [genero, setGenero] = useState("dama");
+  const [lineas, setLineas] = useState<LineaViajeNueva[]>([]);
+  const [nuevoN, setNuevoN] = useState(0);
+
+  useEffect(() => {
+    if (viaje.tipo === "entrega") {
+      api<{ productos: { id: string; imei: string; nombre: string }[] }>("/api/productos").then(
+        ({ data }) => setProductos(data?.productos ?? [])
+      );
+      setLineas(
+        viaje.lineas.map((l, i) => ({
+          key: `existente-${i}`,
+          imei: l.imei,
+          nombre: l.producto_nombre,
+          talla_stock: l.talla_stock,
+          talla_stock_nombre: l.talla_stock_nombre,
+          talla_vendida: l.talla_vendida,
+          talla_vendida_nombre: l.talla_vendida_nombre,
+          producto_id: l.producto_id,
+          cantidad: l.cantidad,
+          precio: Number(l.precio_unitario ?? 0),
+          entalle: l.entalle,
+          genero: l.genero ?? "dama",
+          es_extra_motorizado: l.es_extra_motorizado ?? false,
+        }))
+      );
+    } else if (viaje.tipo === "recojo") {
+      // Recojo: las lineas del viaje tienen devolucion_de apuntando al detalle original
+      const origIds = new Set(viaje.lineas.map((l) => l.devolucion_de).filter(Boolean));
+      setLineas(
+        detallesEnviados
+          .filter((d) => origIds.has(d.id))
+          .map((d) => ({
+            key: `recojo-${d.id}`,
+            imei: d.imei,
+            nombre: d.producto_nombre,
+            talla_stock: d.talla_stock,
+            talla_stock_nombre: d.talla_stock_nombre,
+            talla_vendida: d.talla_vendida,
+            talla_vendida_nombre: d.talla_vendida_nombre,
+            producto_id: d.producto_id,
+            cantidad: d.cantidad,
+            precio: Number(d.precio_unitario ?? 0),
+            entalle: d.entalle,
+            genero: "dama",
+            es_extra_motorizado: d.es_extra_motorizado ?? false,
+          }))
+      );
+    }
+  }, [viaje.tipo, viaje.lineas, detallesEnviados]);
+
+  function cargarTallas(pid: string) {
+    api<{ tallas: { id: string; nombre: string; cantidad_ventas: number }[] }>(
+      "/api/tallas?producto_id=" + pid
+    ).then(({ data }) => {
+      const ts = data?.tallas ?? [];
+      setTallasPorProducto((prev) => ({ ...prev, [pid]: ts }));
+    });
+  }
+
+  useEffect(() => {
+    if (productoId) {
+      setTallaStock("");
+      setEntalle(false);
+      setTallaVendida("");
+      cargarTallas(productoId);
+    }
+  }, [productoId]);
+
+  const dispLocal = (pid: string, tid: string) => {
+    const t = (tallasPorProducto[pid] ?? []).find((x) => x.id === tid);
+    const base = t?.cantidad_ventas ?? 0;
+    const yaSumado = lineas
+      .filter((l) => l.producto_id === pid && (l.talla_stock ?? l.talla_vendida) === tid)
+      .reduce((a, l) => a + l.cantidad, 0);
+    return base - yaSumado;
+  };
+
+  function agregar() {
+    setError(null);
+    if (!productoId) return;
+    const p = productos.find((x) => x.id === productoId);
+    const cant = Number(cantidad);
+    if (!p || !cant || cant <= 0) {
+      setError("Indica una cantidad válida");
+      return;
+    }
+    const stockId = tallaStock || null;
+    const vendidaId = entalle ? tallaVendida || tallaStock : tallaStock;
+    if (stockId && dispLocal(productoId, stockId) < cant) {
+      setError(`Stock insuficiente: solo hay ${dispLocal(productoId, stockId)} disponible en esa talla`);
+      return;
+    }
+    const tallas = tallasPorProducto[productoId] ?? [];
+    const stockSel = tallas.find((t) => t.id === stockId);
+    const vendidaSel = tallas.find((t) => t.id === vendidaId);
+    setNuevoN((n) => n + 1);
+    setLineas((prev) => [
+      ...prev,
+      {
+        key: `nuevo-${nuevoN}`,
+        imei: p.imei,
+        nombre: p.nombre,
+        talla_stock: stockId,
+        talla_stock_nombre: stockSel?.nombre ?? null,
+        talla_vendida: vendidaId || null,
+        talla_vendida_nombre: vendidaSel?.nombre ?? null,
+        producto_id: p.id,
+        cantidad: cant,
+        precio: Number(precio || 0),
+        entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
+        genero,
+        es_extra_motorizado: false,
+      },
+    ]);
+    setProductoId("");
+    setTallaStock("");
+    setEntalle(false);
+    setTallaVendida("");
+    setCantidad("1");
+    setPrecio("");
+  }
+
+  function quitar(key: string) {
+    setLineas((prev) => prev.filter((l) => l.key !== key));
+  }
+
+  async function guardar() {
+    setError(null);
+    if (!fecha) {
+      setError("Indica la fecha del viaje");
+      return;
+    }
+    setLoading(true);
+    const body: Record<string, any> = { fecha, direccion: direccion || null };
+
+    if (esRecojo) {
+      const seleccionados = lineas
+        .filter((l) => l.key.startsWith("recojo-"))
+        .map((l) => ({ detalle_id: l.key.replace("recojo-", ""), cantidad: l.cantidad, precio_devolucion: l.precio }));
+      if (seleccionados.length === 0) {
+        setShowCancelarDialog(true);
+        setLoading(false);
+        return;
+      }
+      body.recojo_lineas = seleccionados;
+    } else if (viaje.tipo === "entrega") {
+      if (lineas.length === 0) {
+        setError("Agrega al menos un producto al viaje");
+        setLoading(false);
+        return;
+      }
+      body.lineas = lineas.map((l) => ({
+        producto_id: l.producto_id,
+        talla_stock: l.talla_stock,
+        talla_vendida: l.entalle ? l.talla_vendida : l.talla_stock,
+        entalle: l.entalle,
+        cantidad: l.cantidad,
+        precio_unitario: l.precio,
+        genero: l.genero,
+        es_extra_motorizado: l.es_extra_motorizado,
+      }));
+    }
+
+    const { error: e } = await api(`/api/viajes/${viaje.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    setLoading(false);
+    if (e) setError(e);
+    else onDone();
+  }
+
+  const tallas = tallasPorProducto[productoId] ?? [];
+  const [showCancelarDialog, setShowCancelarDialog] = useState(false);
+
+  // Para recojo: detalles del pedido que fueron enviados y que NO están ya seleccionados localmente
+  const detallesDisponiblesRecojo = useMemo(() => {
+    if (!esRecojo) return [];
+    const origIdsSeleccionados = new Set(
+      lineas.filter((l) => l.key.startsWith("recojo-")).map((l) => l.key.replace("recojo-", ""))
+    );
+    return detallesEnviados.filter((d) => !origIdsSeleccionados.has(d.id));
+  }, [esRecojo, lineas, detallesEnviados]);
+
+  function toggleRecojo(det: Detalle) {
+    const key = `recojo-${det.id}`;
+    setLineas((prev) => {
+      const exists = prev.some((l) => l.key === key);
+      if (exists) return prev.filter((l) => l.key !== key);
+      return [
+        ...prev,
+        {
+          key,
+          imei: det.imei,
+          nombre: det.producto_nombre,
+          talla_stock: det.talla_stock,
+          talla_stock_nombre: det.talla_stock_nombre,
+          talla_vendida: det.talla_vendida,
+          talla_vendida_nombre: det.talla_vendida_nombre,
+          producto_id: det.producto_id,
+          cantidad: det.cantidad,
+          precio: Number(det.precio_unitario ?? 0),
+          entalle: det.entalle,
+          genero: "dama",
+          es_extra_motorizado: det.es_extra_motorizado ?? false,
+        },
+      ];
+    });
+  }
+
+  async function cancelarViaje() {
+    setLoading(true);
+    const { error: e } = await api(`/api/viajes/${viaje.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ estado: "cancelado" }),
+    });
+    setLoading(false);
+    if (e) setError(e);
+    else onDone();
+  }
+
+  return (
+    <>
+    <Modal
+      open
+      onClose={onClose}
+      title={`Editar viaje ${viaje.codigo}`}
+      xwide
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button onClick={guardar} disabled={loading}>
+            {loading ? "Guardando..." : "Guardar cambios"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Input label="Fecha del viaje" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          <Input label="Dirección" value={direccion} onChange={(e) => setDireccion(e.target.value)} />
+        </div>
+
+        {viaje.tipo === "entrega" && (
+          <>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-700">
+                Agregar producto
+              </h3>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+                <Select label="Producto" value={productoId} onChange={(e) => setProductoId(e.target.value)} className="md:col-span-12">
+                  <option value="">Selecciona...</option>
+                  {productos.map((p) => (
+                    <option key={p.id} value={p.id}>{p.nombre} ({p.imei})</option>
+                  ))}
+                </Select>
+                <Select label="Talla" value={tallaStock} onChange={(e) => { setTallaStock(e.target.value); setTallaVendida(e.target.value); }} className="md:col-span-3">
+                  <option value="">Sin talla</option>
+                  {tallas.filter((t) => dispLocal(productoId, t.id) > 0).length > 0 ? (
+                    tallas
+                      .filter((t) => dispLocal(productoId, t.id) > 0)
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.nombre} ({dispLocal(productoId, t.id)} disp.)
+                        </option>
+                      ))
+                  ) : (
+                    <option value="" disabled>Sin stock</option>
+                  )}
+                </Select>
+                <div className="flex items-end gap-2 md:col-span-3">
+                  <label className="flex items-center gap-1 text-xs text-slate-500">
+                    <input type="checkbox" checked={entalle} onChange={(e) => setEntalle(e.target.checked)} />
+                    Entalle
+                  </label>
+                  {entalle && (
+                    <Select label="" value={tallaVendida} onChange={(e) => setTallaVendida(e.target.value)} className="w-full">
+                      <option value="">Destino...</option>
+                      {tallas.map((t) => (
+                        <option key={t.id} value={t.id}>{t.nombre}</option>
+                      ))}
+                    </Select>
+                  )}
+                </div>
+                <Input label="Cantidad" type="number" min="1" value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="md:col-span-2" />
+                <Input label="Precio (S/)" type="number" step="0.01" value={precio} onChange={(e) => setPrecio(e.target.value)} className="md:col-span-2" />
+                <Select label="Género" value={genero} onChange={(e) => setGenero(e.target.value)} className="md:col-span-2">
+                  <option value="dama">Dama</option>
+                  <option value="varon">Varón</option>
+                  <option value="unisex">Unisex</option>
+                </Select>
+                <div className="flex items-end md:col-span-1">
+                  <Button size="sm" onClick={agregar} className="w-full">+</Button>
+                </div>
+              </div>
+            </div>
+
+            {lineas.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs text-slate-400">
+                  {esProgramado ? "Productos del viaje:" : "Productos actuales del viaje (solo lectura):"}
+                </p>
+                {lineas.map((l) => (
+                  <div key={l.key} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm">
+                    <div>
+                      <span className="font-medium">{l.nombre}</span>
+                      <span className="ml-1 text-xs text-slate-400">({l.imei})</span>
+                      <span className="ml-2 text-xs text-slate-500">
+                        {l.entalle
+                          ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "—"}`
+                          : l.talla_stock_nombre ?? "Sin talla"}{" "}
+                        · x{l.cantidad}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">S/ {(l.cantidad * l.precio).toFixed(2)}</span>
+                      <button onClick={() => quitar(l.key)} className="text-red-400 hover:text-red-600">✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {esRecojo && (
+          <>
+            {lineas.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-slate-500">Productos incluidos en el recojo:</p>
+                {lineas.map((l) => (
+                  <button
+                    key={l.key}
+                    onClick={() => toggleRecojo(detallesEnviados.find((d) => d.id === l.key.replace("recojo-", ""))!)}
+                    className="flex w-full items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-left hover:bg-green-100"
+                  >
+                    <div>
+                      <span className="font-medium">{l.nombre}</span>
+                      <span className="ml-1 text-xs text-slate-400">({l.imei})</span>
+                      <span className="ml-2 text-xs text-slate-500">
+                        {l.talla_stock_nombre ?? "Sin talla"} · x{l.cantidad}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">S/ {(l.cantidad * l.precio).toFixed(2)}</span>
+                      <span className="text-green-600">✓</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {detallesDisponiblesRecojo.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-slate-500">Productos disponibles para agregar al recojo:</p>
+                {detallesDisponiblesRecojo.map((d) => (
+                  <button
+                    key={d.id}
+                    onClick={() => toggleRecojo(d)}
+                    className="flex w-full items-center justify-between rounded-lg border border-dashed border-slate-200 bg-white px-3 py-2 text-sm text-left hover:border-blue-300 hover:bg-blue-50"
+                  >
+                    <div>
+                      <span className="font-medium">{d.producto_nombre}</span>
+                      <span className="ml-1 text-xs text-slate-400">({d.imei})</span>
+                      <span className="ml-2 text-xs text-slate-500">
+                        {d.talla_stock_nombre ?? "Sin talla"} · x{d.cantidad}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">S/ {(d.cantidad * d.precio_unitario).toFixed(2)}</span>
+                      <span className="text-slate-300">+ Agregar</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {lineas.length === 0 && detallesDisponiblesRecojo.length === 0 && (
+              <p className="text-sm text-slate-400 text-center py-4">No hay productos disponibles para devolver.</p>
+            )}
+          </>
+        )}
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+      </div>
+    </Modal>
+
+    {showCancelarDialog && (
+      <Modal open onClose={() => setShowCancelarDialog(false)} title="Cancelar viaje">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Quitaste todos los productos del viaje. ¿Deseas cancelar el viaje de recojo?
+          </p>
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setShowCancelarDialog(false)}>
+              Retroceder
+            </Button>
+            <Button variant="danger" onClick={cancelarViaje} disabled={loading}>
+              {loading ? "Cancelando..." : "Cancelar viaje"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    )}
+  </>
   );
 }
 
@@ -698,9 +1234,20 @@ function viajesDevoluciones(viajes: Viaje[]): number {
   return viajes.filter((v) => v.tipo === "recojo" && v.estado !== "cancelado").reduce((a, v) => a + Number(v.total ?? 0), 0);
 }
 
-function ViajeCard({ viaje, inconsistencias }: { viaje: Viaje; inconsistencias?: any[] }) {
+function ViajeCard({
+  viaje,
+  inconsistencias,
+  onEdit,
+  onCancel,
+}: {
+  viaje: Viaje;
+  inconsistencias?: any[];
+  onEdit?: (viaje: Viaje) => void;
+  onCancel?: (viaje: Viaje) => void;
+}) {
   const esRegreso = viaje.tipo === "recojo";
   const tieneInconsistencia = (inconsistencias ?? []).length > 0;
+  const esActivo = viaje.estado === "programado" || viaje.estado === "alistado";
   return (
     <div className={`overflow-hidden rounded-xl border ${tieneInconsistencia ? "border-red-400 ring-2 ring-red-200" : "border-slate-200"}`}>
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
@@ -719,6 +1266,16 @@ function ViajeCard({ viaje, inconsistencias }: { viaje: Viaje; inconsistencias?:
         <span className="ml-auto text-xs text-slate-400">
           {viaje.fecha ? new Date(viaje.fecha + "T00:00:00").toLocaleDateString("es-PE") : "Sin fecha"}
         </span>
+        {esActivo && onEdit && (
+          <Button size="sm" variant="secondary" onClick={() => onEdit(viaje)}>
+            Editar
+          </Button>
+        )}
+        {esActivo && onCancel && (
+          <Button size="sm" variant="danger" onClick={() => onCancel(viaje)}>
+            Cancelar
+          </Button>
+        )}
       </div>
       <div className="p-4">
         {tieneInconsistencia && (

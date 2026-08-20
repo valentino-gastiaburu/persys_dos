@@ -51,7 +51,7 @@ export async function GET(
     .from("detalles_pedido")
     .select(`
       id, viaje_id, producto_id, talla_stock, talla_vendida, cantidad, precio_unitario,
-      subtotal, genero, entalle, es_extra_motorizado, estado,
+      subtotal, genero, entalle, es_extra_motorizado, estado, devolucion_de,
       productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre),
       tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
     `)
@@ -79,6 +79,7 @@ export async function GET(
       es_extra_motorizado: d.es_extra_motorizado,
       estado: d.estado,
       devolucion: d.estado === "devuelto" || d.estado === "pendiente_devolucion" || d.estado === "oculto",
+      devolucion_de: d.devolucion_de ?? null,
     });
   }
 

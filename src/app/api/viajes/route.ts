@@ -38,11 +38,18 @@ export async function POST(request: NextRequest) {
   if (!pedido) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
 
   if (tipo === "entrega") {
-    // Solo crear viaje de entrega nuevo si el pedido ya fue enviado o entregado
-    // (el primer viaje lo crea "Confirmar pedido"). Evita viajes duplicados.
-    if (!["enviado", "entregado"].includes(pedido.estado)) {
+    // Bloquear solo si ya hay un viaje de entrega sin enviar (programado/alistado).
+    // En ese caso se agregan productos al viaje existente.
+    const { data: viajesEntregaPendientes } = await supabase
+      .from("viajes")
+      .select("id")
+      .eq("pedido_id", pedido.id)
+      .eq("tipo", "entrega")
+      .in("estado", ["programado", "alistado"]);
+
+    if ((viajesEntregaPendientes?.length ?? 0) > 0) {
       return Response.json(
-        { error: "Solo se puede agregar un viaje de entrega cuando el pedido ya fue enviado" },
+        { error: "Ya hay un viaje de entrega pendiente. Agrega los productos a ese viaje." },
         { status: 400 }
       );
     }
