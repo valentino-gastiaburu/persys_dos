@@ -236,6 +236,31 @@
 - `terminado` (recojo): las líneas del regreso pasan de `pendiente_devolucion` a
   **`devuelto`** y las unidades vuelven a `en_almacen` + kardex `entrada`.
 
+#### 4.6.1 Cancelación de viajes
+
+- Solo se pueden cancelar viajes `programado` o `alistado`.
+- **Cancelación de viaje de entrega:** los productos **NO se restauran automáticamente**
+  a `en_almacen`. Quedan donde estén (`almacen_espera` si estaban alistados,
+  `en_viaje` si estaban enviados, etc.) hasta que personal de almacén los devuelva
+  manualmente via la sección "Pendientes a regresar al stock"
+  (`POST /api/viajes/[id]/retorno-stock`). Solo se desvinculan los detalles del viaje
+  (`viaje_id = null`). Se registra en historial si el estado del pedido cambió.
+- **Cancelación de viaje de recojo:** los detalles del recojo se eliminan, los detalles
+  originales se restauran (cantidades y estado), y el viaje se marca como `cancelado`.
+  Las unidades del recojo que estaban pre-asignadas quedan como VPU pendientes.
+
+#### 4.6.2 Retorno de stock manual
+
+- Nuevo endpoint `POST /api/viajes/[id]/retorno-stock` para devolver productos al
+  almacén desde **cualquier viaje** que tenga unidades pendientes (cancelados o
+  recojos activos). Roles: `almacen`, `controller`, `admin`.
+- Acepta escaneo QR (`codigo_qr`) o búsqueda manual (`producto_id + talla_id`).
+- Flujo: marca la VPU como `devuelto`, restaura el `productos_unico` a `en_almacen`,
+  crea kardex entrada + historial.
+- En Almacén/Viajes, la sección **"Pendientes a regresar al stock"** (tabla amber)
+  muestra viajes con `pendientes_retorno > 0`. Solo muestra viajes **cancelados** o
+  de **recojo activo**. Incluye panel inline con escaneo y búsqueda manual.
+
 ### 4.7 Pedido = colección de viajes (viajes extra y devoluciones)
 
 - Cuando un pedido está **`entregado`** (o `esperando_*`/`cerrado`), la única forma
@@ -295,8 +320,10 @@
 
 1. **Revertir confirmado → solicitado** deja el viaje de entrega ya creado y el
    primer pago ya registrado. ¿Deben revertirse o anularse también?
-2. **Cancelar un pedido confirmado**: ¿qué pasa con el viaje programado y las
-   unidades que ya se alistaron?
+2. ~~**Cancelar un pedido confirmado**: ¿qué pasa con el viaje programado y las~~
+   ~~unidades que ya se alistaron?~~ **RESUELTO:** al cancelar un viaje de entrega,
+   los productos NO se restauran automáticamente. Quedan donde estén hasta que
+   almacén los devuelva manualmente via "Pendientes a regresar al stock".
 3. **Password en texto plano** (riesgo; MVP). ¿Migrar a hash?
 4. **Pendientes SQL**: `03_tandas`, `04_tallas`, `05_pedidos_equipo`,
    `07_talla_stock_vendida` y `08_viajes_extras` ya están en Supabase

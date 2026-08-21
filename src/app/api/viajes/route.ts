@@ -335,17 +335,61 @@ export async function GET(request: NextRequest) {
   const { data, error: err } = await query.limit(200);
   if (err) return Response.json({ error: "Error de base de datos" }, { status: 500 });
 
-  // Contar unidades alistadas por viaje
+  // Contar unidades alistadas por viaje + unidades pendientes de retorno
   const ids = (data ?? []).map((v: any) => v.id);
+  const viajeInfo: Record<string, { estado: string; tipo: string }> = {};
+  for (const v of data ?? []) {
+    viajeInfo[v.id] = { estado: v.estado, tipo: v.tipo };
+  }
   let alistadosPorViaje: Record<string, number> = {};
+  let pendientesRetornoPorViaje: Record<string, number> = {};
   if (ids.length > 0) {
-    const { data: alist } = await supabase
+    const { data: vpuRows } = await supabase
       .from("viaje_producto_unicos")
-      .select("viaje_id")
+      .select("viaje_id, estado, detalle_pedido_id")
       .in("viaje_id", ids);
     alistadosPorViaje = {};
-    for (const a of alist ?? []) {
-      alistadosPorViaje[a.viaje_id] = (alistadosPorViaje[a.viaje_id] ?? 0) + 1;
+    pendientesRetornoPorViaje = {};
+
+    // Agrupar VPUs por viaje+detalle para detectar excedentes
+    const vpPorDetalle: Record<string, number> = {};
+    for (const vpu of vpuRows ?? []) {
+      alistadosPorViaje[vpu.viaje_id] = (alistadosPorViaje[vpu.viaje_id] ?? 0) + 1;
+      const key = `${vpu.viaje_id}|${vpu.detalle_pedido_id}`;
+      vpPorDetalle[key] = (vpPorDetalle[key] ?? 0) + 1;
+    }
+
+    // 1) Cancelados / recojo activo (flujo original)
+    for (const vpu of vpuRows ?? []) {
+      const info = viajeInfo[vpu.viaje_id];
+      if (!info) continue;
+      const esCancelado = info.estado === "cancelado";
+      const esRecojoActivo = info.tipo === "recojo" && info.estado !== "terminado";
+      if ((esCancelado || esRecojoActivo) && vpu.estado !== "devuelto" && vpu.estado !== "pendiente") {
+        pendientesRetornoPorViaje[vpu.viaje_id] = (pendientesRetornoPorViaje[vpu.viaje_id] ?? 0) + 1;
+      }
+    }
+
+    // 2) VPUs excedentes en viajes activos (cantidad del detalle < VPUs alistados)
+    if (ids.length > 0) {
+      const detalleIds = [...new Set((vpuRows ?? []).map((v) => v.detalle_pedido_id).filter(Boolean))];
+      if (detalleIds.length > 0) {
+        const { data: detalles } = await supabase
+          .from("detalles_pedido")
+          .select("id, viaje_id, cantidad")
+          .in("id", detalleIds);
+        for (const det of detalles ?? []) {
+          if (!det.viaje_id) continue;
+          const info = viajeInfo[det.viaje_id];
+          if (!info || info.estado === "terminado" || info.estado === "cancelado") continue;
+          const key = `${det.viaje_id}|${det.id}`;
+          const totalVpu = vpPorDetalle[key] ?? 0;
+          const exceso = totalVpu - Number(det.cantidad);
+          if (exceso > 0) {
+            pendientesRetornoPorViaje[det.viaje_id] = (pendientesRetornoPorViaje[det.viaje_id] ?? 0) + exceso;
+          }
+        }
+      }
     }
   }
 
@@ -359,6 +403,7 @@ export async function GET(request: NextRequest) {
     pedido_codigo: v.pedidos?.codigo ?? null,
     pedido_estado: v.pedidos?.estado ?? null,
     unidades_alistadas: alistadosPorViaje[v.id] ?? 0,
+    pendientes_retorno: pendientesRetornoPorViaje[v.id] ?? 0,
   }));
 
   return Response.json({ viajes });

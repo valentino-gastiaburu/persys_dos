@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { registrarHistorialPedido, syncEstadoPedidoPorViajes, recalcularTotalViaje } from "@/lib/pedidos";
+import { registrarHistorialPedido, syncEstadoPedidoPorViajes, recalcularTotalViaje, sincronizarTotalesPedido } from "@/lib/pedidos";
 
 // GET /api/viajes/[id] — detalle del viaje: productos a alistar + alistados
 export async function GET(
@@ -125,41 +125,40 @@ export async function PATCH(
       return Response.json({ error: "Solo se pueden cancelar viajes programados o alistados" }, { status: 400 });
     }
 
-    // Restaurar stock si hay unidades alistadas
-    const { data: unidades } = await supabase
-      .from("viaje_producto_unicos")
-      .select("producto_unico_id, detalle_pedido_id")
-      .eq("viaje_id", id);
+    const estadoPedidoAnterior = (
+      await supabase.from("pedidos").select("estado").eq("id", viaje.pedido_id).single()
+    ).data?.estado;
 
-    if ((unidades?.length ?? 0) > 0) {
-      const vpuIds = unidades!.map((u) => u.producto_unico_id);
-      await supabase
-        .from("productos_unicos")
-        .update({ estado: "en_almacen", fecha_salida: null })
-        .in("id", vpuIds);
-      await supabase.from("viaje_producto_unicos").delete().eq("viaje_id", id);
+    // NOTA: Al cancelar un viaje de entrega, los productos NO se restauran
+    // automáticamente a en_almacen. Quedan donde estén (almacen_espera, en_viaje,
+    // etc.) hasta que personal de almacén los devuelva manualmente via la sección
+    // "Pendientes a regresar al stock". Solo se desvinculan los detalles del viaje.
 
-      const { data: unicosInfo } = await supabase
-        .from("productos_unicos")
-        .select("producto_id, talla_id")
-        .in("id", vpuIds);
-      const agrupado: Record<string, { producto_id: string; talla_id: string; cantidad: number }> = {};
-      for (const u of unicosInfo ?? []) {
-        const key = `${u.producto_id}:${u.talla_id}`;
-        agrupado[key] = agrupado[key] ?? { producto_id: u.producto_id, talla_id: u.talla_id, cantidad: 0 };
-        agrupado[key].cantidad += 1;
+    // Si es recojo: encontrar detalles del recojo ANTES de desvincular
+    let recojoIds: string[] = [];
+    let origIds: string[] = [];
+    let origCantidades: Record<string, { cantidad: number; subtotal: number }> = {};
+    if (viaje.tipo === "recojo") {
+      const { data: recojoDetalles } = await supabase
+        .from("detalles_pedido")
+        .select("id, devolucion_de, cantidad, subtotal, precio_unitario")
+        .eq("viaje_id", id)
+        .not("devolucion_de", "is", null);
+
+      recojoIds = (recojoDetalles ?? []).map((d) => d.id);
+      origIds = (recojoDetalles ?? [])
+        .map((d) => d.devolucion_de)
+        .filter(Boolean);
+
+      // Guardar cantidades del recojo para restaurar cantidades parciales
+      for (const d of recojoDetalles ?? []) {
+        if (d.devolucion_de) {
+          origCantidades[d.devolucion_de] = {
+            cantidad: Number(d.cantidad),
+            subtotal: Number(d.subtotal ?? 0),
+          };
+        }
       }
-      const kardex = Object.values(agrupado).map((g) => ({
-        producto_id: g.producto_id,
-        talla_id: g.talla_id,
-        tipo: "entrada",
-        cantidad: g.cantidad,
-        referencia_tipo: "viaje",
-        referencia_id: id,
-        persona_id: user.id,
-        nota: "Entrada por cancelación de viaje",
-      }));
-      if (kardex.length > 0) await supabase.from("movimientos_stock").insert(kardex);
     }
 
     // Desvincular detalles de este viaje
@@ -168,10 +167,58 @@ export async function PATCH(
       .update({ viaje_id: null })
       .eq("viaje_id", id);
 
+    // Si es recojo: restaurar detalles originales y eliminar detalles del recojo
+    if (viaje.tipo === "recojo") {
+      if (origIds.length > 0) {
+        // Obtener estado y cantidad actual de los originales
+        const { data: originales } = await supabase
+          .from("detalles_pedido")
+          .select("id, estado, cantidad, precio_unitario")
+          .in("id", origIds);
+
+        for (const orig of originales ?? []) {
+          const cantRecojo = origCantidades[orig.id]?.cantidad ?? 0;
+          if (orig.estado === "oculto") {
+            // Retorno completo: restaurar estado a activo
+            await supabase
+              .from("detalles_pedido")
+              .update({ estado: "activo" })
+              .eq("id", orig.id);
+          } else if (orig.estado === "activo" && cantRecojo > 0) {
+            // Retorno parcial: restaurar cantidad y subtotal
+            const nuevaCant = Number(orig.cantidad) + cantRecojo;
+            const precio = Number(orig.precio_unitario ?? 0);
+            await supabase
+              .from("detalles_pedido")
+              .update({ cantidad: nuevaCant, subtotal: nuevaCant * precio })
+              .eq("id", orig.id);
+          }
+        }
+      }
+      if (recojoIds.length > 0) {
+        await supabase.from("detalles_pedido").delete().in("id", recojoIds);
+      }
+    }
+
     await supabase.from("viajes").update({ estado: "cancelado" }).eq("id", id);
 
+    // Recalcular totales: si se restauraron detalles (recojo cancelado),
+    // el viaje de entrega que los contenía cambió de total
+    const montoTotal = await sincronizarTotalesPedido(viaje.pedido_id);
+
     const nuevoEstadoPedido = await syncEstadoPedidoPorViajes(viaje.pedido_id);
-    await supabase.from("pedidos").update({ estado: nuevoEstadoPedido }).eq("id", viaje.pedido_id);
+    await supabase.from("pedidos").update({ estado: nuevoEstadoPedido, monto_total: montoTotal }).eq("id", viaje.pedido_id);
+
+    // Registrar en historial
+    if (estadoPedidoAnterior !== nuevoEstadoPedido) {
+      await registrarHistorialPedido({
+        pedido_id: viaje.pedido_id,
+        estado_anterior: estadoPedidoAnterior ?? null,
+        estado_nuevo: nuevoEstadoPedido,
+        persona_id: user.id,
+        motivo: `Cancelación de viaje ${viaje.tipo === "recojo" ? "de recojo" : "de entrega"}`,
+      });
+    }
 
     return Response.json({ ok: true });
   }
@@ -373,6 +420,7 @@ export async function PATCH(
   // ── Modificar productos ──
   if (body.lineas !== undefined) {
     const lineas: {
+      detalle_id?: string;
       producto_id: string;
       talla_stock: string | null;
       talla_vendida: string | null;
@@ -419,31 +467,200 @@ export async function PATCH(
         }
       }
     } else if (viaje.estado === "alistado") {
-      // Alistado: solo AGREGAR productos nuevos (los existentes con VPU escaneado se mantienen)
+      // Alistado: re-vincular huérfanos, actualizar cantidades, agregar nuevos, eliminar los que sobran.
+
+      // Obtener detalles existentes en el viaje
+      const { data: existentes } = await supabase
+        .from("detalles_pedido")
+        .select("id, producto_id, talla_stock, talla_vendida, cantidad")
+        .eq("viaje_id", id)
+        .not("estado", "eq", "oculto");
+      const existentesList = existentes ?? [];
+
+      // Obtener VPU existentes para saber qué detalles NO se pueden borrar
+      const existenteIds = existentesList.map((e) => e.id);
+      const { data: vpuExistentes } = await supabase
+        .from("viaje_producto_unicos")
+        .select("detalle_pedido_id")
+        .eq("viaje_id", id)
+        .in("detalle_pedido_id", existenteIds);
+      const detallesConVpu = new Set((vpuExistentes ?? []).map((v) => v.detalle_pedido_id));
+
+      // Re-vincular detalles huérfanos (viaje_id = null) que están siendo restaurados
+      const lineasConDetalle = lineas.filter((l) => l.detalle_id);
+      if (lineasConDetalle.length > 0) {
+        const orphanIds = lineasConDetalle.map((l) => l.detalle_id!);
+        const { data: orphans } = await supabase
+          .from("detalles_pedido")
+          .select("id, producto_id, talla_stock, talla_vendida")
+          .in("id", orphanIds)
+          .is("viaje_id", null);
+        for (const o of orphans ?? []) {
+          const linea = lineasConDetalle.find((l) => l.detalle_id === o.id);
+          if (linea) {
+            await supabase
+              .from("detalles_pedido")
+              .update({
+                viaje_id: id,
+                cantidad: Number(linea.cantidad),
+                precio_unitario: Number(linea.precio_unitario ?? 0),
+                subtotal: Number(linea.cantidad) * Number(linea.precio_unitario ?? 0),
+              })
+              .eq("id", o.id);
+            // Añadir a existentesList para que no se dupliquen
+            existentesList.push({ id: o.id, producto_id: o.producto_id, talla_stock: o.talla_stock, talla_vendida: o.talla_vendida, cantidad: Number(linea.cantidad) });
+          }
+        }
+      }
+
+      // Actualizar cantidades de detalles existentes que siguen en el viaje
+      for (const linea of lineas) {
+        const existente = existentesList.find(
+          (e) => e.producto_id === linea.producto_id
+            && (e.talla_stock || "") === (linea.talla_stock || "")
+            && (e.talla_vendida || "") === (linea.talla_vendida || "")
+        );
+        if (existente && Number(existente.cantidad) !== Number(linea.cantidad)) {
+          await supabase
+            .from("detalles_pedido")
+            .update({ cantidad: Number(linea.cantidad) })
+            .eq("id", existente.id);
+        }
+      }
+
+      // Eliminar detalles que sobran y no tienen VPU
       if (lineas.length > 0) {
-        const detalles = lineas.map((l) => ({
-          pedido_id: viaje.pedido_id,
-          viaje_id: id,
-          producto_id: l.producto_id,
-          talla_stock: l.talla_stock || null,
-          talla_vendida: (l.entalle ? (l.talla_vendida ?? l.talla_stock) : l.talla_stock) || null,
-          entalle: Boolean(l.talla_stock && l.talla_vendida && l.talla_stock !== l.talla_vendida && l.entalle),
-          cantidad: Number(l.cantidad),
-          precio_unitario: Number(l.precio_unitario ?? 0),
-          subtotal: Number(l.cantidad) * Number(l.precio_unitario ?? 0),
-          genero: l.genero || "dama",
-          es_extra_motorizado: Boolean(l.es_extra_motorizado),
-          anadido_por: user.id,
-          confirmado_el: new Date().toISOString(),
-        }));
-        const { error: errDet } = await supabase.from("detalles_pedido").insert(detalles);
-        if (errDet) {
-          return Response.json({ error: "No se pudieron guardar los productos" }, { status: 500 });
+        const nuevasKeys = new Set(
+          lineas.map((l) => `${l.producto_id}|${l.talla_stock || ""}|${l.talla_vendida || ""}`)
+        );
+        const aEliminar = existentesList.filter(
+          (e) => !nuevasKeys.has(`${e.producto_id}|${e.talla_stock || ""}|${e.talla_vendida || ""}`)
+            && !detallesConVpu.has(e.id)
+        );
+        if (aEliminar.length > 0) {
+          await supabase
+            .from("detalles_pedido")
+            .delete()
+            .in("id", aEliminar.map((e) => e.id));
+        }
+      } else if (lineas.length === 0) {
+        const aEliminar = existentesList.filter((e) => !detallesConVpu.has(e.id));
+        if (aEliminar.length > 0) {
+          await supabase
+            .from("detalles_pedido")
+            .delete()
+            .in("id", aEliminar.map((e) => e.id));
+        }
+      }
+
+      // Insertar detalles NUEVOS (que no existan ya en el viaje ni sean huérfanos restaurados)
+      if (lineas.length > 0) {
+        const existentesSet = new Set(
+          existentesList.map((e) => `${e.producto_id}|${e.talla_stock}|${e.talla_vendida}`)
+        );
+        const nuevos = lineas.filter(
+          (l) => !existentesSet.has(`${l.producto_id}|${l.talla_stock || ""}|${l.talla_vendida || ""}`)
+        );
+        if (nuevos.length > 0) {
+          const detalles = nuevos.map((l) => ({
+            pedido_id: viaje.pedido_id,
+            viaje_id: id,
+            producto_id: l.producto_id,
+            talla_stock: l.talla_stock || null,
+            talla_vendida: (l.entalle ? (l.talla_vendida ?? l.talla_stock) : l.talla_stock) || null,
+            entalle: Boolean(l.talla_stock && l.talla_vendida && l.talla_stock !== l.talla_vendida && l.entalle),
+            cantidad: Number(l.cantidad),
+            precio_unitario: Number(l.precio_unitario ?? 0),
+            subtotal: Number(l.cantidad) * Number(l.precio_unitario ?? 0),
+            genero: l.genero || "dama",
+            es_extra_motorizado: Boolean(l.es_extra_motorizado),
+            anadido_por: user.id,
+            confirmado_el: new Date().toISOString(),
+          }));
+          const { error: errDet } = await supabase.from("detalles_pedido").insert(detalles);
+          if (errDet) {
+            return Response.json({ error: "No se pudieron guardar los productos" }, { status: 500 });
+          }
         }
       }
     }
 
     await recalcularTotalViaje(id, viaje.tipo, viaje.costo_envio);
+    await sincronizarTotalesPedido(viaje.pedido_id);
+  }
+
+  // ── Desvincular detalles (quitar productos con VPU asignado) ──
+  if (body.detalles_a_desvincular !== undefined) {
+    if (!esActivo) {
+      return Response.json({ error: "Solo se pueden editar viajes programados o alistados" }, { status: 400 });
+    }
+    const idsDesvincular: string[] = body.detalles_a_desvincular;
+    if (idsDesvincular.length > 0) {
+      // Filtrar: solo los que aún pertenecen a este viaje (ignorar ya huérfanos)
+      const { data: checkDetalles } = await supabase
+        .from("detalles_pedido")
+        .select("id")
+        .eq("viaje_id", id)
+        .in("id", idsDesvincular);
+      const validIds = new Set((checkDetalles ?? []).map((d) => d.id));
+      const aDesvincular = idsDesvincular.filter((did) => validIds.has(did));
+      if (aDesvincular.length === 0) {
+        // Todos ya eran huérfanos, nada que hacer
+      } else {
+        // Verificar que no tengan VPU enviado/devuelto
+        const { data: vpuCheck } = await supabase
+          .from("viaje_producto_unicos")
+          .select("detalle_pedido_id, estado")
+          .eq("viaje_id", id)
+          .in("detalle_pedido_id", aDesvincular)
+          .in("estado", ["enviado", "devuelto"]);
+        if ((vpuCheck?.length ?? 0) > 0) {
+          const bloqueados = [...new Set(vpuCheck!.map((v) => v.detalle_pedido_id))];
+          return Response.json(
+            { error: "No se pueden desvincular detalles con productos ya enviados/devueltos", detalles_bloqueados: bloqueados },
+            { status: 400 }
+          );
+        }
+
+        // Desvincular: poner viaje_id = null (los VPUs quedan en el viaje)
+        await supabase
+          .from("detalles_pedido")
+          .update({ viaje_id: null })
+          .eq("viaje_id", id)
+          .in("id", aDesvincular);
+
+        await recalcularTotalViaje(id, viaje.tipo, viaje.costo_envio);
+        await sincronizarTotalesPedido(viaje.pedido_id);
+      }
+    }
+  }
+
+  // ── Reducir VPUs de detalles (bajar cantidad) ──
+  if (body.vpus_a_restar !== undefined && esActivo) {
+    const entries = Object.entries(body.vpus_a_restar as Record<string, number>);
+    for (const [detalleId, count] of entries) {
+      const n = Number(count);
+      if (!detalleId || n <= 0) continue;
+
+      // Actualizar cantidad del detalle
+      const { data: detActual } = await supabase
+        .from("detalles_pedido")
+        .select("cantidad")
+        .eq("id", detalleId)
+        .single();
+      if (detActual) {
+        const nuevaCantidad = Math.max(0, Number(detActual.cantidad) - n);
+        await supabase
+          .from("detalles_pedido")
+          .update({ cantidad: nuevaCantidad })
+          .eq("id", detalleId);
+      }
+      // Los VPUs excedentes quedan en el viaje.
+      // El cálculo de pendientes_retorno detecta VPUs > cantidad del detalle.
+      // Almacén los devuelve manualmente via retorno-stock.
+    }
+    await recalcularTotalViaje(id, viaje.tipo, viaje.costo_envio);
+    await sincronizarTotalesPedido(viaje.pedido_id);
   }
 
   // ── Modificar productos de recojo (agregar/quitar detalles) ──
@@ -474,12 +691,32 @@ export async function PATCH(
       }
     }
 
-    // Eliminar detalles actuales que ya no están seleccionados
+    // Eliminar detalles actuales que ya no están seleccionados + restaurar originales
     const aEliminar = (actuales ?? [])
       .filter((d: any) => !seleccionIds.has(d.devolucion_de))
-      .map((d: any) => d.id);
+      .map((d: any) => d);
     if (aEliminar.length > 0) {
-      await supabase.from("detalles_pedido").delete().in("id", aEliminar);
+      // Restaurar originales de los detalles eliminados
+      const origIdsEliminar = aEliminar.map((d: any) => d.devolucion_de).filter(Boolean);
+      if (origIdsEliminar.length > 0) {
+        const { data: originalesEliminar } = await supabase
+          .from("detalles_pedido")
+          .select("id, estado, cantidad, precio_unitario")
+          .in("id", origIdsEliminar);
+
+        for (const orig of originalesEliminar ?? []) {
+          const recojoEliminado = aEliminar.find((d: any) => d.devolucion_de === orig.id);
+          const cantDevolver = Number(recojoEliminado?.cantidad ?? 0);
+          if (orig.estado === "oculto") {
+            await supabase.from("detalles_pedido").update({ estado: "activo" }).eq("id", orig.id);
+          } else if (orig.estado === "activo" && cantDevolver > 0) {
+            const nuevaCant = Number(orig.cantidad) + cantDevolver;
+            const precio = Number(orig.precio_unitario ?? 0);
+            await supabase.from("detalles_pedido").update({ cantidad: nuevaCant, subtotal: nuevaCant * precio }).eq("id", orig.id);
+          }
+        }
+      }
+      await supabase.from("detalles_pedido").delete().in("id", aEliminar.map((d: any) => d.id));
     }
 
     // Insertar nuevos detalles seleccionados que no existan aún
@@ -522,10 +759,26 @@ export async function PATCH(
         if (errIns) {
           return Response.json({ error: "No se pudieron agregar productos al recojo" }, { status: 500 });
         }
+
+        // Ocultar/Reducir originales de los detalles insertados
+        for (const s of aInsertar) {
+          const orig = porId.get(s.detalle_id);
+          if (!orig) continue;
+          const cant = Number(s.cantidad);
+          const cantOriginal = Number(orig.cantidad);
+          const nuevaCant = cantOriginal - cant;
+          const precio = Number(orig.precio_unitario ?? 0);
+          if (nuevaCant <= 0) {
+            await supabase.from("detalles_pedido").update({ estado: "oculto" }).eq("id", s.detalle_id);
+          } else {
+            await supabase.from("detalles_pedido").update({ cantidad: nuevaCant, subtotal: nuevaCant * precio }).eq("id", s.detalle_id);
+          }
+        }
       }
     }
 
     await recalcularTotalViaje(id, viaje.tipo, 0);
+    await sincronizarTotalesPedido(viaje.pedido_id);
   }
 
   const { data: viajeFinal } = await supabase.from("viajes").select("*").eq("id", id).single();

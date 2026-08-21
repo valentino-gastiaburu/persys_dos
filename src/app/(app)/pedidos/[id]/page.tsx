@@ -109,6 +109,8 @@ type ViajeLinea = {
   devolucion: boolean;
   genero: string | null;
   devolucion_de: string | null;
+  pendiente_retorno?: boolean;
+  vpu_count?: number;
 };
 type Viaje = {
   id: string;
@@ -198,13 +200,11 @@ export default function PedidoDetallePage() {
   const puedeConfirmar = ["borrador", "solicitado"].includes(pedido.estado);
   const puedeCancelar = ["solicitado", "confirmado"].includes(pedido.estado);
   const puedeVolverSolicitado = pedido.estado === "confirmado";
-  const puedeEditar = ["borrador", "solicitado", "confirmado", "alistado"].includes(pedido.estado);
+  const tuvoViajes = viajes.length > 0;
+  const puedeEditar = !tuvoViajes && ["borrador", "solicitado", "confirmado", "alistado"].includes(pedido.estado);
   const puedeCrearViajes =
     rol != null && ["vendedora", "agendadora", "controller", "admin"].includes(rol);
-  const pedidoEntregado = ["enviado", "entregado", "esperando_devolucion", "esperando_cambio", "cerrado"].includes(
-    pedido.estado
-  );
-  const gestionarViajes = !puedeEditar && pedidoEntregado && puedeCrearViajes;
+  const gestionarViajes = !puedeEditar && tuvoViajes && puedeCrearViajes;
 
   // Viajes ordenados por creado_el descendente (más recientes primero)
   const viajesActivos = viajes
@@ -241,6 +241,7 @@ export default function PedidoDetallePage() {
         ...l,
         viaje_codigo: v.codigo,
         viaje_tipo: v.tipo,
+        viaje_estado: v.estado,
       }))
     )
     .filter((l) => l.estado !== "oculto");
@@ -409,8 +410,12 @@ export default function PedidoDetallePage() {
                               <Badge color="green">Devuelto</Badge>
                             ) : l.estado === "pendiente_devolucion" ? (
                               <Badge color="red">Pendiente de devolución</Badge>
+                            ) : l.viaje_estado === "alistado" ? (
+                              <Badge color="blue">Alistado</Badge>
+                            ) : l.viaje_estado === "enviado" ? (
+                              <Badge color="amber">Enviado</Badge>
                             ) : (
-                              <Badge color="blue">En el pedido</Badge>
+                              <Badge color="slate">Por alistar</Badge>
                             )}
                           </td>
                           <td className="border-r border-slate-200 px-3 py-2 text-xs text-slate-500">
@@ -660,6 +665,7 @@ export default function PedidoDetallePage() {
         <EditarViajeModal
           viaje={editarViaje}
           pedidoId={id}
+          viajes={viajes}
           detallesEnviados={detallesEnviados}
           onClose={() => setEditarViaje(null)}
           onDone={() => {
@@ -730,12 +736,14 @@ function CancelarViajeModal({
 function EditarViajeModal({
   viaje,
   pedidoId,
+  viajes,
   detallesEnviados,
   onClose,
   onDone,
 }: {
   viaje: Viaje;
   pedidoId: string;
+  viajes: Viaje[];
   detallesEnviados: Detalle[];
   onClose: () => void;
   onDone: () => void;
@@ -761,11 +769,22 @@ function EditarViajeModal({
   const [genero, setGenero] = useState("dama");
   const [lineas, setLineas] = useState<LineaViajeNueva[]>([]);
   const [nuevoN, setNuevoN] = useState(0);
+  const [vpuPorDetalle, setVpuPorDetalle] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (viaje.tipo === "entrega") {
       api<{ productos: { id: string; imei: string; nombre: string }[] }>("/api/productos").then(
         ({ data }) => setProductos(data?.productos ?? [])
+      );
+      // Fetch VPU counts per detail for this viaje
+      api<{ items: { detalle_id: string; alistados: number }[] }>(`/api/viajes/${viaje.id}`).then(
+        ({ data }) => {
+          const map: Record<string, number> = {};
+          for (const item of data?.items ?? []) {
+            map[item.detalle_id] = item.alistados;
+          }
+          setVpuPorDetalle(map);
+        }
       );
       setLineas(
         viaje.lineas.map((l, i) => ({
@@ -782,32 +801,35 @@ function EditarViajeModal({
           entalle: l.entalle,
           genero: l.genero ?? "dama",
           es_extra_motorizado: l.es_extra_motorizado ?? false,
+          vpu_count: l.vpu_count ?? 0,
+          pendiente_retorno: l.pendiente_retorno ?? false,
+          vpu_a_restar: 0,
+          detalle_id: l.id,
         }))
       );
     } else if (viaje.tipo === "recojo") {
-      // Recojo: las lineas del viaje tienen devolucion_de apuntando al detalle original
-      const origIds = new Set(viaje.lineas.map((l) => l.devolucion_de).filter(Boolean));
       setLineas(
-        detallesEnviados
-          .filter((d) => origIds.has(d.id))
-          .map((d) => ({
-            key: `recojo-${d.id}`,
-            imei: d.imei,
-            nombre: d.producto_nombre,
-            talla_stock: d.talla_stock,
-            talla_stock_nombre: d.talla_stock_nombre,
-            talla_vendida: d.talla_vendida,
-            talla_vendida_nombre: d.talla_vendida_nombre,
-            producto_id: d.producto_id,
-            cantidad: d.cantidad,
-            precio: Number(d.precio_unitario ?? 0),
-            entalle: d.entalle,
-            genero: "dama",
-            es_extra_motorizado: d.es_extra_motorizado ?? false,
-          }))
+        viaje.lineas.map((l) => ({
+          key: `recojo-${l.devolucion_de ?? l.id}`,
+          imei: l.imei,
+          nombre: l.producto_nombre,
+          talla_stock: l.talla_stock,
+          talla_stock_nombre: l.talla_stock_nombre,
+          talla_vendida: l.talla_vendida,
+          talla_vendida_nombre: l.talla_vendida_nombre,
+          producto_id: l.producto_id,
+          cantidad: l.cantidad,
+          precio: Number(l.precio_unitario ?? 0),
+          entalle: l.entalle,
+          genero: l.genero ?? "dama",
+          es_extra_motorizado: l.es_extra_motorizado ?? false,
+          vpu_count: 0,
+          pendiente_retorno: false,
+          vpu_a_restar: 0,
+        }))
       );
     }
-  }, [viaje.tipo, viaje.lineas, detallesEnviados]);
+  }, [viaje.tipo, viaje.lineas, viaje.id]);
 
   function cargarTallas(pid: string) {
     api<{ tallas: { id: string; nombre: string; cantidad_ventas: number }[] }>(
@@ -871,6 +893,9 @@ function EditarViajeModal({
         entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
         genero,
         es_extra_motorizado: false,
+        vpu_count: 0,
+        pendiente_retorno: false,
+        vpu_a_restar: 0,
       },
     ]);
     setProductoId("");
@@ -882,7 +907,39 @@ function EditarViajeModal({
   }
 
   function quitar(key: string) {
+    const linea = lineas.find((l) => l.key === key);
+    if (linea && linea.pendiente_retorno) {
+      const vpuCount = (linea.vpu_count || vpuPorDetalle[linea.detalle_id ?? ""]) ?? 0;
+      setLineas((prev) =>
+        prev.map((l) =>
+          l.key === key ? { ...l, pendiente_retorno: false, cantidad: vpuCount || l.cantidad || 1, vpu_a_restar: 0 } : l
+        )
+      );
+      return;
+    }
+    if (linea && !linea.pendiente_retorno) {
+      const vpuCount = (linea.vpu_count || vpuPorDetalle[linea.detalle_id ?? ""]) ?? 0;
+      if (vpuCount > 0) {
+        setLineas((prev) =>
+          prev.map((l) =>
+            l.key === key ? { ...l, pendiente_retorno: true, cantidad: 0, vpu_count: vpuCount, vpu_a_restar: 0 } : l
+          )
+        );
+        return;
+      }
+    }
     setLineas((prev) => prev.filter((l) => l.key !== key));
+  }
+
+  function manejarCambioCantidad(key: string, nuevaCant: number) {
+    setLineas((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) return l;
+        const vpuCount = (l.vpu_count || vpuPorDetalle[l.detalle_id ?? ""]) ?? 0;
+        const capped = vpuCount > 0 ? Math.min(nuevaCant, vpuCount) : Math.max(0, nuevaCant);
+        return { ...l, cantidad: capped, vpu_a_restar: vpuCount > 0 ? vpuCount - capped : 0, pendiente_retorno: false };
+      })
+    );
   }
 
   async function guardar() {
@@ -905,21 +962,35 @@ function EditarViajeModal({
       }
       body.recojo_lineas = seleccionados;
     } else if (viaje.tipo === "entrega") {
-      if (lineas.length === 0) {
+      const normales = lineas.filter((l) => !l.pendiente_retorno);
+      const marcadas = lineas.filter((l) => l.pendiente_retorno && l.detalle_id);
+      if (normales.length === 0 && marcadas.length === 0) {
         setError("Agrega al menos un producto al viaje");
         setLoading(false);
         return;
       }
-      body.lineas = lineas.map((l) => ({
-        producto_id: l.producto_id,
-        talla_stock: l.talla_stock,
-        talla_vendida: l.entalle ? l.talla_vendida : l.talla_stock,
-        entalle: l.entalle,
-        cantidad: l.cantidad,
-        precio_unitario: l.precio,
-        genero: l.genero,
-        es_extra_motorizado: l.es_extra_motorizado,
-      }));
+      if (normales.length > 0) {
+        body.lineas = normales.map((l) => ({
+          detalle_id: l.detalle_id || undefined,
+          producto_id: l.producto_id,
+          talla_stock: l.talla_stock,
+          talla_vendida: l.entalle ? l.talla_vendida : l.talla_stock,
+          entalle: l.entalle,
+          cantidad: l.cantidad,
+          precio_unitario: l.precio,
+          genero: l.genero,
+          es_extra_motorizado: l.es_extra_motorizado,
+        }));
+      }
+      if (marcadas.length > 0) {
+        body.detalles_a_desvincular = marcadas.map((l) => l.detalle_id!);
+      }
+      const conResta = normales.filter((l) => (l.vpu_a_restar ?? 0) > 0 && l.detalle_id);
+      if (conResta.length > 0) {
+        body.vpus_a_restar = Object.fromEntries(
+          conResta.map((l) => [l.detalle_id!, l.vpu_a_restar!])
+        );
+      }
     }
 
     const { error: e } = await api(`/api/viajes/${viaje.id}`, {
@@ -934,16 +1005,22 @@ function EditarViajeModal({
   const tallas = tallasPorProducto[productoId] ?? [];
   const [showCancelarDialog, setShowCancelarDialog] = useState(false);
 
-  // Para recojo: detalles del pedido que fueron enviados y que NO están ya seleccionados localmente
   const detallesDisponiblesRecojo = useMemo(() => {
     if (!esRecojo) return [];
+    // Construir pool desde viaje.lineas de viajes de entrega enviados/terminados
+    const pool: ViajeLinea[] = [];
+    for (const v of viajes) {
+      if (v.tipo !== "entrega") continue;
+      if (v.estado !== "enviado" && v.estado !== "terminado") continue;
+      pool.push(...v.lineas);
+    }
     const origIdsSeleccionados = new Set(
       lineas.filter((l) => l.key.startsWith("recojo-")).map((l) => l.key.replace("recojo-", ""))
     );
-    return detallesEnviados.filter((d) => !origIdsSeleccionados.has(d.id));
-  }, [esRecojo, lineas, detallesEnviados]);
+    return pool.filter((d) => !origIdsSeleccionados.has(d.id));
+  }, [esRecojo, lineas, viajes]);
 
-  function toggleRecojo(det: Detalle) {
+  function toggleRecojo(det: ViajeLinea) {
     const key = `recojo-${det.id}`;
     setLineas((prev) => {
       const exists = prev.some((l) => l.key === key);
@@ -962,8 +1039,11 @@ function EditarViajeModal({
           cantidad: det.cantidad,
           precio: Number(det.precio_unitario ?? 0),
           entalle: det.entalle,
-          genero: "dama",
+          genero: det.genero ?? "dama",
           es_extra_motorizado: det.es_extra_motorizado ?? false,
+          vpu_count: 0,
+          pendiente_retorno: false,
+          vpu_a_restar: 0,
         },
       ];
     });
@@ -1056,31 +1136,97 @@ function EditarViajeModal({
               </div>
             </div>
 
-            {lineas.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-xs text-slate-400">
-                  {esProgramado ? "Productos del viaje:" : "Productos actuales del viaje (solo lectura):"}
-                </p>
-                {lineas.map((l) => (
-                  <div key={l.key} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm">
-                    <div>
-                      <span className="font-medium">{l.nombre}</span>
-                      <span className="ml-1 text-xs text-slate-400">({l.imei})</span>
-                      <span className="ml-2 text-xs text-slate-500">
-                        {l.entalle
-                          ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "—"}`
-                          : l.talla_stock_nombre ?? "Sin talla"}{" "}
-                        · x{l.cantidad}
-                      </span>
+            {(() => {
+              const normales = lineas.filter((l) => !l.pendiente_retorno);
+              const marcadas = lineas.filter((l) => l.pendiente_retorno);
+              return (
+                <>
+                  {normales.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-400">
+                        {esProgramado ? "Productos del viaje:" : "Productos actuales del viaje (solo lectura):"}
+                      </p>
+                      {normales.map((l) => {
+                        const vpuCount = (l.vpu_count || vpuPorDetalle[l.detalle_id ?? ""]) ?? 0;
+                        return (
+                          <div key={l.key} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm">
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="font-medium">{l.nombre}</span>
+                              <span className="ml-1 text-xs text-slate-400">({l.imei})</span>
+                              <span className="ml-2 text-xs text-slate-500">
+                                {l.entalle
+                                  ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "—"}`
+                                  : l.talla_stock_nombre ?? "Sin talla"}{" "}
+                                · x
+                              </span>
+                              {vpuCount > 0 && viaje.estado === "alistado" ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={vpuCount}
+                                  value={l.cantidad}
+                                  onChange={(e) => manejarCambioCantidad(l.key, parseInt(e.target.value) || 0)}
+                                  className="w-14 text-center text-xs border border-blue-200 rounded px-1 py-0.5"
+                                />
+                              ) : (
+                                <span className="text-xs text-slate-500">{l.cantidad}</span>
+                              )}
+                              {vpuCount > 0 && (
+                                <span className="ml-1 inline-block rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                                  {vpuCount} ali{l.vpu_count !== 1 ? "s" : ""}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold">S/ {(l.cantidad * l.precio).toFixed(2)}</span>
+                              <button onClick={() => quitar(l.key)} className="text-red-400 hover:text-red-600">✕</button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold">S/ {(l.cantidad * l.precio).toFixed(2)}</span>
-                      <button onClick={() => quitar(l.key)} className="text-red-400 hover:text-red-600">✕</button>
+                  )}
+
+                  {marcadas.length > 0 && (
+                    <div className="space-y-1 rounded-lg border-2 border-red-300 bg-red-50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-red-600">
+                        Productos a devolver al stock
+                      </p>
+                      <p className="text-[11px] text-red-500">
+                        Almacén deberá retirar estos productos y devolverlos al stock.
+                      </p>
+                      {marcadas.map((l) => {
+                        const vpuCount = (l.vpu_count || vpuPorDetalle[l.detalle_id ?? ""]) ?? 0;
+                        const exceso = vpuCount;
+                        return (
+                          <div key={l.key} className="flex items-center justify-between rounded-lg border border-red-300 bg-white px-3 py-2 text-sm">
+                            <div>
+                              <span className="font-medium">{l.nombre}</span>
+                              <span className="ml-1 text-xs text-slate-400">({l.imei})</span>
+                              <span className="ml-2 text-xs text-slate-500">
+                                {l.entalle
+                                  ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "—"}`
+                                  : l.talla_stock_nombre ?? "Sin talla"}
+                              </span>
+                              <span className="ml-2 inline-block rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+                                Quitar {exceso}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => quitar(l.key)}
+                              className="text-red-400 hover:text-red-600"
+                              title="Restaurar a línea normal"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  )}
+                </>
+              );
+            })()}
           </>
         )}
 
@@ -1090,10 +1236,9 @@ function EditarViajeModal({
               <div className="space-y-1">
                 <p className="text-xs font-medium text-slate-500">Productos incluidos en el recojo:</p>
                 {lineas.map((l) => (
-                  <button
+                  <div
                     key={l.key}
-                    onClick={() => toggleRecojo(detallesEnviados.find((d) => d.id === l.key.replace("recojo-", ""))!)}
-                    className="flex w-full items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-left hover:bg-green-100"
+                    className="group flex w-full items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm transition-colors hover:bg-green-100"
                   >
                     <div>
                       <span className="font-medium">{l.nombre}</span>
@@ -1104,9 +1249,15 @@ function EditarViajeModal({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold">S/ {(l.cantidad * l.precio).toFixed(2)}</span>
-                      <span className="text-green-600">✓</span>
+                      <button
+                        onClick={() => quitar(l.key)}
+                        className="rounded-full p-1.5 text-red-300 opacity-50 transition-all hover:bg-red-100 hover:text-red-600 hover:opacity-100"
+                        title="Quitar del recojo"
+                      >
+                        ✕
+                      </button>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -1118,7 +1269,7 @@ function EditarViajeModal({
                   <button
                     key={d.id}
                     onClick={() => toggleRecojo(d)}
-                    className="flex w-full items-center justify-between rounded-lg border border-dashed border-slate-200 bg-white px-3 py-2 text-sm text-left hover:border-blue-300 hover:bg-blue-50"
+                    className="group flex w-full items-center justify-between rounded-lg border border-dashed border-slate-200 bg-white px-3 py-2 text-sm text-left hover:border-blue-300 hover:bg-blue-50"
                   >
                     <div>
                       <span className="font-medium">{d.producto_nombre}</span>
@@ -1129,7 +1280,7 @@ function EditarViajeModal({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold">S/ {(d.cantidad * d.precio_unitario).toFixed(2)}</span>
-                      <span className="text-slate-300">+ Agregar</span>
+                      <span className="text-sm font-medium text-blue-400 transition-colors group-hover:text-blue-600">+ Agregar</span>
                     </div>
                   </button>
                 ))}
@@ -1248,13 +1399,25 @@ function ViajeCard({
   const esRegreso = viaje.tipo === "recojo";
   const tieneInconsistencia = (inconsistencias ?? []).length > 0;
   const esActivo = viaje.estado === "programado" || viaje.estado === "alistado";
+  const esTerminado = viaje.estado === "enviado" || viaje.estado === "terminado";
+
+  const borderClass = esRegreso
+    ? esTerminado ? "border-red-200" : "border-red-400"
+    : esTerminado ? "border-emerald-200" : "border-emerald-400";
+  const headerBg = esRegreso
+    ? esTerminado ? "bg-red-50" : "bg-red-100"
+    : esTerminado ? "bg-emerald-50" : "bg-emerald-100";
+  const headerBorder = esRegreso
+    ? esTerminado ? "border-red-100" : "border-red-200"
+    : esTerminado ? "border-emerald-100" : "border-emerald-200";
+
   return (
-    <div className={`overflow-hidden rounded-xl border ${tieneInconsistencia ? "border-red-400 ring-2 ring-red-200" : "border-slate-200"}`}>
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+    <div className={`overflow-hidden rounded-xl border ${tieneInconsistencia ? "border-red-400 ring-2 ring-red-200" : borderClass} ${esTerminado ? "opacity-75" : ""}`}>
+      <div className={`flex flex-wrap items-center gap-2 border-b ${headerBorder} ${headerBg} px-4 py-3`}>
         <Link href={`/almacen/${viaje.id}`} className="text-sm font-semibold text-blue-600 hover:underline">
           {viaje.codigo}
         </Link>
-        <Badge color={esRegreso ? "amber" : "blue"}>{esRegreso ? "Regreso" : "Entrega"}</Badge>
+        <Badge color={esRegreso ? "red" : "green"}>{esRegreso ? "Regreso" : "Entrega"}</Badge>
         <Badge color={ESTADO_BADGE[viaje.estado] ?? "slate"}>
           {VIAJE_ESTADO_LABEL[viaje.estado] ?? viaje.estado}
         </Badge>
@@ -1309,34 +1472,65 @@ function ViajeCard({
           {viaje.lineas.length === 0 ? (
             <p className="text-sm text-slate-400">Sin productos.</p>
           ) : (
-            viaje.lineas.map((l) => (
-              <div
-                key={l.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm"
-              >
-                <div className="min-w-0">
-                  <p className="font-medium text-slate-800">
-                    {l.producto_nombre}{" "}
-                    <span className="text-xs font-normal text-slate-400">({l.imei})</span>
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    {l.entalle
-                      ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
-                      : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}{" "}
-                    · x{l.cantidad}
-                    {l.es_extra_motorizado ? " · +motorizado" : ""}
-                  </p>
+            <>
+              {viaje.lineas.filter((l) => !l.pendiente_retorno).map((l) => (
+                <div
+                  key={l.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-800">
+                      {l.producto_nombre}{" "}
+                      <span className="text-xs font-normal text-slate-400">({l.imei})</span>
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {l.entalle
+                        ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                        : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}{" "}
+                      · x{l.cantidad}
+                      {l.es_extra_motorizado ? " · +motorizado" : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {l.estado === "oculto" || l.estado === "devuelto" ? (
+                      <Badge color="green">Devuelto</Badge>
+                    ) : l.devolucion ? (
+                      <Badge color="red">Pendiente de devolución</Badge>
+                    ) : null}
+                    <span className="text-sm font-semibold text-slate-800">S/ {Number(l.subtotal).toFixed(2)}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {l.estado === "oculto" || l.estado === "devuelto" ? (
-                    <Badge color="green">Devuelto</Badge>
-                  ) : l.devolucion ? (
-                    <Badge color="red">Pendiente de devolución</Badge>
-                  ) : null}
-                  <span className="text-sm font-semibold text-slate-800">S/ {Number(l.subtotal).toFixed(2)}</span>
+              ))}
+              {viaje.lineas.some((l) => l.pendiente_retorno) && (
+                <div className="mt-2 rounded-lg border-2 border-red-200 bg-red-50 p-2">
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-red-600">
+                    Pendiente a devolver al stock
+                  </p>
+                  {viaje.lineas.filter((l) => l.pendiente_retorno).map((l) => (
+                    <div
+                      key={l.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium text-red-800">
+                          {l.producto_nombre}{" "}
+                          <span className="text-xs font-normal text-red-400">({l.imei})</span>
+                        </p>
+                        <p className="text-xs text-red-500">
+                          {l.entalle
+                            ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                            : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}{" "}
+                          · x{l.vpu_count ?? l.cantidad}
+                          {" · "}
+                          <span className="font-semibold">Almacén debe devolver {(l.vpu_count ?? l.cantidad)} producto(s)</span>
+                        </p>
+                      </div>
+                      <Badge color="red">{(l.vpu_count ?? l.cantidad)} para devolver</Badge>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            ))
+              )}
+            </>
           )}
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2 text-sm">
@@ -1370,6 +1564,10 @@ type LineaViajeNueva = {
   entalle: boolean;
   genero: string;
   es_extra_motorizado: boolean;
+  vpu_count: number;
+  pendiente_retorno: boolean;
+  vpu_a_restar: number;
+  detalle_id?: string;
 };
 
 // Nuevo viaje de ENTREGA: agrega productos a un pedido ya entregado, con su
@@ -1474,6 +1672,9 @@ function NuevoViajeEntregaModal({
         entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
         genero,
         es_extra_motorizado: false,
+        vpu_count: 0,
+        pendiente_retorno: false,
+        vpu_a_restar: 0,
       },
     ]);
     setProductoId("");

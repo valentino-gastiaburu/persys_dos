@@ -83,9 +83,70 @@ export async function GET(
     });
   }
 
+  // Detalles huérfanos: desvinculados del viaje pero con VPU todavía asignado.
+  // Estos aparecen como "Pendiente a devolver al stock" en la tarjeta del viaje.
+  const viajeIds = (viajesData ?? []).map((v: any) => v.id);
+  const detallesHuermanos: Record<string, any[]> = {};
+  if (viajeIds.length > 0) {
+    const { data: vpuRows } = await supabase
+      .from("viaje_producto_unicos")
+      .select("viaje_id, detalle_pedido_id")
+      .in("viaje_id", viajeIds)
+      .not("estado", "eq", "devuelto");
+
+    const orphanPairs = (vpuRows ?? []).filter((vpu) => {
+      const detalle = (detallesViaje ?? []).find((d: any) => d.id === vpu.detalle_pedido_id);
+      return detalle && !detalle.viaje_id;
+    });
+
+    if (orphanPairs.length > 0) {
+      const orphanIds = [...new Set(orphanPairs.map((vpu) => vpu.detalle_pedido_id))];
+      const { data: orphanDetalles } = await supabase
+        .from("detalles_pedido")
+        .select(`
+          id, viaje_id, producto_id, talla_stock, talla_vendida, cantidad, precio_unitario,
+          subtotal, genero, entalle, es_extra_motorizado, estado, devolucion_de,
+          productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre),
+          tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
+        `)
+        .in("id", orphanIds);
+
+      for (const d of (orphanDetalles ?? []) as any[]) {
+        const vpuEnViaje = orphanPairs.filter((vpu) => vpu.detalle_pedido_id === d.id);
+        const viajeConVpu = vpuEnViaje[0]?.viaje_id;
+        if (!viajeConVpu) continue;
+        detallesHuermanos[viajeConVpu] = detallesHuermanos[viajeConVpu] ?? [];
+        detallesHuermanos[viajeConVpu].push({
+          id: d.id,
+          producto_id: d.producto_id,
+          imei: d.productos?.imei,
+          producto_nombre: d.productos?.nombre,
+          talla_stock: d.talla_stock,
+          talla_stock_nombre: d.tallas_stock?.nombre ?? null,
+          talla_vendida: d.talla_vendida,
+          talla_vendida_nombre: d.tallas?.nombre ?? null,
+          cantidad: Number(d.cantidad),
+          precio_unitario: Number(d.precio_unitario),
+          subtotal: Number(d.subtotal),
+          genero: d.genero,
+          entalle: d.entalle,
+          es_extra_motorizado: d.es_extra_motorizado,
+          estado: d.estado,
+          devolucion: false,
+          devolucion_de: null,
+          pendiente_retorno: true,
+          vpu_count: vpuEnViaje.length,
+        });
+      }
+    }
+  }
+
   const viajes = (viajesData ?? []).map((v: any) => ({
     ...v,
-    lineas: lineasPorViaje[v.id] ?? [],
+    lineas: [
+      ...(lineasPorViaje[v.id] ?? []),
+      ...(detallesHuermanos[v.id] ?? []),
+    ],
   }));
 
   return Response.json({
@@ -121,6 +182,12 @@ export async function PATCH(
   const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
   if (!EDITABLES.includes(actual.estado)) {
     return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
+  }
+
+  const { data: viajesExistentes } = await supabase
+    .from("viajes").select("id").eq("pedido_id", id).limit(1);
+  if ((viajesExistentes?.length ?? 0) > 0) {
+    return Response.json({ error: "El pedido tiene viajes; editalo desde ahi" }, { status: 400 });
   }
 
   const permitidos = [

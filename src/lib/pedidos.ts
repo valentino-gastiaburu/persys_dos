@@ -177,7 +177,8 @@ export async function sincronizarTotalesPedido(pedidoId: string): Promise<number
     .from("viajes")
     .select("id, costo_envio")
     .eq("pedido_id", pedidoId)
-    .eq("tipo", "entrega");
+    .eq("tipo", "entrega")
+    .neq("estado", "cancelado");
   for (const v of viajes ?? []) {
     await recalcularTotalViaje(v.id, "entrega", Number(v.costo_envio ?? 0));
   }
@@ -405,5 +406,6 @@ export async function recalcularEstadoViaje(viajeId: string): Promise<void> {
   }
 
   // Sincronizar estado del pedido
-  await syncEstadoPedidoPorViajes(viaje.pedido_id);
+  const nuevoEstado = await syncEstadoPedidoPorViajes(viaje.pedido_id);
+  await supabase.from("pedidos").update({ estado: nuevoEstado }).eq("id", viaje.pedido_id);
 }

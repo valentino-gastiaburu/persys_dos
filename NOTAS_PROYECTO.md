@@ -1,7 +1,7 @@
 # Persys_dos — Contexto del proyecto
 
 > Bitácora resumida: decisiones del usuario, respuestas a preguntas y estado actual.
-> Última actualización: 16/ago/2026.
+> Última actualización: 20/ago/2026.
 
 ## Qué es Persys_dos
 
@@ -141,6 +141,44 @@ configuración.
       una vez, valida cada una (producto/talla/estado/duplicados) y responde cuáles se
       guardaron y cuáles fallaron.
 
+20. **Editar pedido: bloqueado tras crear viaje** (20/ago/2026): una vez que un pedido tiene
+    al menos un viaje asociado (entrega o recojo), `puedeEditar = false` siempre. El usuario
+    solo puede **gestionar viajes** (crear viaje extra o viaje de regreso) desde el botón
+    "Gestionar viajes". La tabla de detalles del pedido se oculta; se muestra una tarjeta por
+    viaje con sus productos.
+
+21. **Cancelar viaje de entrega: sin auto-restore de stock** (20/ago/2026): al cancelar un viaje
+    de entrega, los productos **NO se restauran automáticamente** a `en_almacen`. Quedan donde
+    estén (`almacen_espera` si estaban alistados, `en_viaje` si estaban enviados, etc.) hasta
+    que personal de almacén los devuelva manualmente via la sección **"Pendientes a regresar
+    al stock"**. Solo se desvinculan los detalles del viaje (se ponen `viaje_id = null`). Si
+    es un viaje de recojo, los detalles originales se restauran (cantidades y estado) y los
+    detalles del recojo se eliminan.
+
+22. **Retorno de stock manual (retorno-stock)** (20/ago/2026): nuevo endpoint
+    `POST /api/viajes/[id]/retorno-stock` que permite devolver productos al almacén desde
+    **cualquier viaje** que tenga unidades pendientes (cancelados o recojos activos). Acepta
+    escaneo QR (`codigo_qr`) o búsqueda manual (`producto_id + talla_id`). Marca la VPU como
+    `devuelto`, restaura el `productos_unico` a `en_almacen`, crea kardex entrada + historial.
+    Roles: `almacen`, `controller`, `admin`.
+
+23. **Sección "Pendientes a regresar al stock"** (20/ago/2026): en Almacén/Viajes, tabla amber
+    que muestra viajes con `pendientes_retorno > 0` (VPU alistado/enviado sin devolver). Solo
+    muestra viajes **cancelados** o de **recojo activo** (no viajes de entrega activos). Incluye
+    un **panel inline** con escaneo HTML5Qrcode y búsqueda manual que llama a
+    `POST /retorno-stock`. Al completar, la tabla se actualiza en tiempo real.
+
+24. **API GET /api/viajes retorna `pendientes_retorno`** (20/ago/2026): cada viaje en la lista
+    incluye `pendientes_retorno` (count de VPU no-devueltos, filtrado por viaje cancelado o
+    recojo activo). Almacén usa este dato para mostrar la sección amber.
+
+25. **toggleRecojo usa `det.genero`** (20/ago/2026): al marcar/desmarcar recojo en el detalle
+    del viaje, se usa el género del detalle (`det.genero`) en vez de hardcodear `"dama"`.
+
+26. **Historial al cancelar** (20/ago/2026): al cancelar un viaje se llama
+    `registrarHistorialPedido` si el estado del pedido cambió, y se registra en
+    `historial_producto_unicos` (evento "cancelado") para cada VPU del viaje.
+
 ## Preguntas respondidas en el camino (resumen técnico)
 
 - **¿Por qué `GET /api/auth/me` daba 401?** No era bug del app: (a) el cliente de prueba no
@@ -185,11 +223,25 @@ configuración.
    viaje de entrega original). Aditiva/idempotente.
 8. `supabase/09_fechas_devolucion.sql` → agrega `viajes.fecha_devolucion` (fecha efectiva
    de devolución, cuando el recojo termina). Aditiva/idempotente.
+9. `supabase/10_inconsistencias.sql` → tabla `inconsistencias` para registrar problemas del
+   sistema (pedido cancelado con stock, fechas inválidas, etc.). Tipos: `pedido_cancelado_stock`,
+   `pedido_fecha_entrega`, `viaje_devolucion_passada`, `pago_fecha_passada`,
+   `detalle_devolucion_horfana`.
+10. `supabase/11_trigger_inconsistencias_cancelacion.sql` → trigger `on_pedido_cancelado_stock`:
+    cuando un pedido se cancela y tiene unidades alistadas en viajes, crea una inconsistencia
+    tipo `pedido_cancelado_stock`.
+11. `supabase/12_add_viaje_cancelado.sql` → agrega `'cancelado'` al enum `viaje_estado`.
+12. `supabase/13_add_viaje_exceso_alistado.sql` → agrega `'viaje_exceso_alistado'` al check
+    constraint de `inconsistencias.tipo`.
+13. `supabase/14_drop_rls_inconsistencias.sql` → desactiva RLS en `inconsistencias` (anon
+    necesita INSERT/UPDATE sin restricciones).
+14. `supabase/15_viaje_recojo_pendiente.sql` → agrega `'pendiente'` al enum
+    `viaje_producto_estado` (pre-asignación de productos para recojo).
 
-Para una BD nueva: **01 → 02 → 03 → 04 → 05 → 08 → 09** (07 no hace falta). Para la BD
-existente: basta correr **03, 04, 05, 07, 08 y 09** (aditivas/idempotentes; no tocan datos).
-(La migración `06_stock_ventas.sql` se creó y luego **se eliminó**: la regla de stock ventas
-es 100% JS, `getStockVentasPorTalla`, sin vista ni función SQL.)
+**Estado de migraciones en Supabase:** 03–15 + 07 ya corrieron. Para una BD nueva:
+**01 → 02 → 03 → 04 → 05 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15** (07 no hace falta,
+porque `02_schema.sql` ya trae `talla_stock`/`talla_vendida`). Para la BD existente: todas
+ya corrieron (aditivas/idempotentes; no tocan datos).
 
 ## Smoke test E2E (validado OK contra la BD real)
 
@@ -240,6 +292,28 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
   → `confirmado`. Así un pedido entregado que recibe un viaje de entrega extra vuelve a
   `confirmado` hasta que todos sus viajes avancen.
 
+## Reglas de negocio importantes
+
+- **Cancelar viaje de entrega NO restaura stock**: los productos quedan donde estén hasta que
+  almacén los devuelva manualmente via la sección "Pendientes a regresar al stock"
+  (`POST /api/viajes/[id]/retorno-stock`). Esto evita restauraciones automáticas incorrectas.
+- **Stock ventas** (`getStockVentasPorTalla`): = `getConteoPorTalla()` (solo `en_almacen`) −
+  `getComprometidasPorTalla()` (detalles activos de pedidos activos − VPU ya alistados). Evita
+  doble descuento: una vez alistado, el producto físico salió de almacén y ya no compite por
+  stock de ventas.
+- **`sincronizarTotalesPedido`** solo suma viajes de entrega (`.eq("tipo", "entrega")`) excluyendo
+  cancelados. Los viajes de recojo se restan al calcular `calcularTotalPedido`.
+- **`recalcularEstadoViaje`**: si hay exceso de alistado (más VPU que unidades pedidas), crea
+  inconsistencia tipo `viaje_exceso_alistado`. Si todas las líneas están cubiertas y el viaje
+  está `programado`, lo pasa a `alistado` automáticamente.
+- **`productos_unicos` estados relevantes**: `en_almacen` (stock disponible), `almacen_espera`
+  (alistado pero no enviado), `en_viaje` (enviado), `entregado`, `eliminado`.
+- **`viaje_producto_unicos`**: `pendiente` → `alistado` (al escanear) → `enviado` (al enviar) →
+  `devuelto` (al terminar recojo o via retorno-stock). Los VPU pendientes en viajes cancelados
+  o recojos activos aparecen en la sección "Pendientes a regresar al stock".
+- **Edición de pedido bloqueada**: una vez creado un viaje, `puedeEditar = false` siempre.
+  Solo se puede gestionar viajes (crear viaje extra o de regreso).
+
 ## GitHub
 
 - Repo: `https://github.com/valentino-gastiaburu/persys_dos` (remoto `origin`, rama `main`,
@@ -247,18 +321,12 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 
 ## Pendientes / notas
 
-- Las migraciones `03_tandas`, `04_tallas`, `05_pedidos_equipo` **ya están corriendo en
-  Supabase** (el usuario las corrió el 16/ago/2026). "Añadir stock", tallas AB/ABC y el
-  equipo de vendedoras ya funcionan.
 - **`supabase/07_talla_stock_vendida.sql`** ya la corrió el usuario (16/ago/2026):
   `detalles_pedido` usa `talla_stock`/`talla_vendida` en Supabase. Verificado vía
   REST (`select=talla_stock,talla_vendida,entalle`).
-- El smoke test dejó **datos de prueba** en la BD (productos/clientes/pedidos con "SMOKE").
-  Preguntar al usuario si limpiarlos.
-- **`supabase/08_viajes_extras.sql` está pendiente de correr** por el usuario en el SQL Editor
-  (implementación lista en código). Hasta que se corra, `viajes.total/costo_envio/direccion`,
-  `detalles_pedido.devolucion_de` y los estados `pendiente_devolucion`/`devuelto` no existen
-  en la BD y la feature de viajes extras no funciona.
+- **`supabase/08_viajes_extras.sql`** ya la corrió el usuario (20/ago/2026):
+  `viajes.total/costo_envio/direccion`, `detalles_pedido.devolucion_de` y los estados
+  `pendiente_devolucion`/`devuelto` existen en la BD. Viajes extras y recojos funcionan.
 - **`supabase/09_fechas_devolucion.sql`** ya la corrió el usuario (16/ago/2026):
   `viajes.fecha_devolucion` existe en la BD y la fecha efectiva de devolución se registra
   al terminar un recojo.
@@ -268,3 +336,19 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - **⚠️ Caché de Turbopack**: Si cambiaste código en `src/lib/` y el cambio no se refleja
   en runtime, **reiniciar `next dev`**. Turbopack a veces no recarga módulos importados
   por API routes durante hot-reload. Causó debugging innecesario el 16/ago/2026.
+
+## Wipe de BD (procedimiento de testing)
+
+Se hizo wipe completo 2 veces (20/ago/2026) para testing limpio. Procedimiento:
+1. `DELETE FROM historial_producto_unicos;`
+2. `DELETE FROM movimientos_stock;`
+3. `DELETE FROM inconsistencias;`
+4. `DELETE FROM pagos;`
+5. `DELETE FROM viaje_producto_unicos;`
+6. `DELETE FROM detalles_pedido;`
+7. `DELETE FROM viajes;`
+8. `DELETE FROM pedidos;`
+9. Restaurar productos: `UPDATE productos_unicos SET estado = 'en_almacen', fecha_salida = NULL, tanda_id = NULL;`
+10. Eliminar tandas: `DELETE FROM tandas;`
+
+**NOTA:** El wipe NO toca las migraciones (03, 04, 05, 07, 08, 09). Solo limpia datos.

@@ -123,7 +123,9 @@ async function getConteoPorTalla() {
   return conteo;
 }
 
-// comprometido por (producto_id|talla_id): cantidad en pedidos realizados.
+// comprometido por (producto_id|talla_id): unidades pendientes en pedidos activos.
+// Solo cuentan las unidades que AÚN NO fueron alistadas (sacadas del almacén).
+// Una vez alistas, el producto físico salió de en_almacen → ya no compite por stock.
 // Reservan stock los pedidos en estados activos (solicitado, confirmado, alistado,
 // enviado, entregado, cerrado, esperando_devolucion, esperando_cambio);
 // NO reservan los borradores ni los cancelados/devueltos.
@@ -140,14 +142,31 @@ async function getComprometidasPorTalla() {
   if (ids.length === 0) return comprometidas;
   const { data: detalles } = await supabase
     .from("detalles_pedido")
-    .select("producto_id, talla_stock, talla_vendida, cantidad")
+    .select("id, producto_id, talla_stock, talla_vendida, cantidad")
     .eq("estado", "activo")
     .in("pedido_id", ids);
+  if (!detalles || detalles.length === 0) return comprometidas;
+
+  // Obtener conteo de VPU ya alistados/enviados por detalle (unidades que ya salieron)
+  const detalleIds = detalles.map((d: any) => d.id);
+  const { data: vpuRows } = await supabase
+    .from("viaje_producto_unicos")
+    .select("detalle_pedido_id")
+    .in("detalle_pedido_id", detalleIds)
+    .not("estado", "eq", "pendiente");
+  const alistedPorDetalle: Record<string, number> = {};
+  for (const v of vpuRows ?? []) {
+    alistedPorDetalle[v.detalle_pedido_id] = (alistedPorDetalle[v.detalle_pedido_id] ?? 0) + 1;
+  }
+
   for (const d of detalles ?? []) {
     const tallaReserva = d.talla_stock ?? d.talla_vendida;
     if (!tallaReserva) continue;
     const k = `${d.producto_id}|${tallaReserva}`;
-    comprometidas[k] = (comprometidas[k] ?? 0) + Number(d.cantidad);
+    const alisted = alistedPorDetalle[d.id] ?? 0;
+    const pendiente = Math.max(0, Number(d.cantidad) - alisted);
+    if (pendiente <= 0) continue;
+    comprometidas[k] = (comprometidas[k] ?? 0) + pendiente;
   }
   return comprometidas;
 }

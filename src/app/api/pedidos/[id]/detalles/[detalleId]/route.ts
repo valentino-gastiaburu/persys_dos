@@ -25,6 +25,12 @@ export async function PATCH(
     return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
   }
 
+  const { data: viajesExistentes } = await supabase
+    .from("viajes").select("id").eq("pedido_id", id).limit(1);
+  if ((viajesExistentes?.length ?? 0) > 0) {
+    return Response.json({ error: "El pedido tiene viajes; editalo desde ahi" }, { status: 400 });
+  }
+
   const { data: detalle } = await supabase
     .from("detalles_pedido")
     .select("*")
@@ -119,6 +125,12 @@ export async function DELETE(
   const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
   if (!pedido || !EDITABLES.includes(pedido.estado)) {
     return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
+  }
+
+  const { data: viajesExistentes } = await supabase
+    .from("viajes").select("id").eq("pedido_id", id).limit(1);
+  if ((viajesExistentes?.length ?? 0) > 0) {
+    return Response.json({ error: "El pedido tiene viajes; editalo desde ahi" }, { status: 400 });
   }
 
   const { data: detalle } = await supabase
