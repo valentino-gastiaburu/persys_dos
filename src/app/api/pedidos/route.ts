@@ -38,7 +38,21 @@ export async function POST(request: NextRequest) {
     l.talla_vendida = l.entalle ? (l.talla_vendida ?? l.talla_stock) : l.talla_stock;
   }
 
-  const { conflictos } = await validarStockLineas(lineas);
+  // Mergear duplicados: misma (producto_id, talla_stock, talla_vendida) → sumar cantidades.
+  const merged = new Map<string, typeof lineas[0]>();
+  for (const l of lineas) {
+    const key = `${l.producto_id}|${l.talla_stock}|${l.talla_vendida}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.cantidad += Number(l.cantidad);
+      existing.precio_unitario = Number(l.precio_unitario ?? existing.precio_unitario ?? 0);
+    } else {
+      merged.set(key, { ...l });
+    }
+  }
+  const lineasUnicas = [...merged.values()];
+
+  const { conflictos } = await validarStockLineas(lineasUnicas);
   if (conflictos.length > 0) {
     return Response.json(
       { error: "Stock insuficiente para algunos productos", conflictos },
@@ -81,8 +95,8 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "No se pudo crear el pedido" }, { status: 500 });
   }
 
-  // Insertar todas las líneas en un solo batch.
-  const detalles = lineas.map((l) => {
+  // Insertar todas las líneas en un solo batch (ya merged).
+  const detalles = lineasUnicas.map((l) => {
     const precioUnitario = Number(l.precio_unitario ?? 0);
     const tallaStock = l.talla_stock || null;
     const tallaVendida = l.talla_vendida || null;

@@ -252,23 +252,38 @@ export default function NuevoPedidoPage() {
       }
     }
 
-    setLineas((prev) => [
-      ...prev,
-      {
-        producto_id: p.id,
-        talla_stock: tallaStockId,
-        talla_stock_nombre: tallaSel?.nombre ?? null,
-        talla_vendida: tallaVendidaIdFinal || null,
-        talla_vendida_nombre: (tallas.find((t) => t.id === tallaVendidaIdFinal)?.nombre) ?? null,
-        cantidad: cant,
-        precio_unitario: precio,
-        genero: selGenero,
-        entalle: Boolean(tallaStockId && tallaVendidaIdFinal && tallaStockId !== tallaVendidaIdFinal),
-        es_extra_motorizado: false,
-        imei: p.imei,
-        nombre: p.nombre,
-      },
-    ]);
+    // Si ya existe una línea con el mismo (producto, talla_stock, talla_vendida), mergear cantidades.
+    const claveMerge = `${p.id}|${tallaStockId}|${tallaVendidaIdFinal}`;
+    const idxExistente = lineas.findIndex(
+      (l) => `${l.producto_id}|${l.talla_stock}|${l.talla_vendida}` === claveMerge
+    );
+    if (idxExistente >= 0) {
+      setLineas((prev) =>
+        prev.map((l, i) =>
+          i === idxExistente
+            ? { ...l, cantidad: l.cantidad + cant }
+            : l
+        )
+      );
+    } else {
+      setLineas((prev) => [
+        ...prev,
+        {
+          producto_id: p.id,
+          talla_stock: tallaStockId,
+          talla_stock_nombre: tallaSel?.nombre ?? null,
+          talla_vendida: tallaVendidaIdFinal || null,
+          talla_vendida_nombre: (tallas.find((t) => t.id === tallaVendidaIdFinal)?.nombre) ?? null,
+          cantidad: cant,
+          precio_unitario: precio,
+          genero: selGenero,
+          entalle: Boolean(tallaStockId && tallaVendidaIdFinal && tallaStockId !== tallaVendidaIdFinal),
+          es_extra_motorizado: false,
+          imei: p.imei,
+          nombre: p.nombre,
+        },
+      ]);
+    }
     setSelProducto("");
     setProdQ("");
     setSelTalla("");

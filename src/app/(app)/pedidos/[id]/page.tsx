@@ -344,7 +344,7 @@ export default function PedidoDetallePage() {
               )}
             </div>
             <div className="p-5">
-              {puedeEditar ? (
+              {(puedeEditar || pedido.estado === "cancelado") ? (
                 detalles.length === 0 ? (
                   <p className="text-sm text-slate-400">Sin productos.</p>
                 ) : (
@@ -451,7 +451,7 @@ export default function PedidoDetallePage() {
               )}
               <div className="mt-4 flex justify-between border-t border-slate-300 pt-3 text-sm">
                 <span className="text-slate-500">
-                  Total {!puedeEditar ? "(entregas − devoluciones)" : "(incluye envío)"}
+                  Total {pedido.estado === "cancelado" ? "(incluye envío)" : !puedeEditar ? "(entregas − devoluciones)" : "(incluye envío)"}
                 </span>
                 <span className="font-bold text-slate-800">S/ {Number(pedido.monto_total).toFixed(2)}</span>
               </div>
@@ -901,10 +901,16 @@ function EditarViajeModal({
   const dispLocal = (pid: string, tid: string) => {
     const t = (tallasPorProducto[pid] ?? []).find((x) => x.id === tid);
     const base = t?.cantidad_ventas ?? 0;
-    const yaSumado = lineas
+    const initKeys = Object.keys(cantInicialRef.current).filter((k) => {
+      const ln = lineas.find((x) => x.key === k);
+      return ln && ln.producto_id === pid && (ln.talla_stock ?? ln.talla_vendida) === tid;
+    });
+    const initTotal = initKeys.reduce((a, k) => a + (cantInicialRef.current[k] ?? 0), 0);
+    const maxTotal = base + initTotal;
+    const currentTotal = lineas
       .filter((l) => l.producto_id === pid && (l.talla_stock ?? l.talla_vendida) === tid)
       .reduce((a, l) => a + l.cantidad, 0);
-    return base - yaSumado;
+    return Math.max(0, maxTotal - currentTotal);
   };
 
   function agregar() {
@@ -919,16 +925,6 @@ function EditarViajeModal({
     const stockId = tallaStock || null;
     const vendidaId = entalle ? tallaVendida || tallaStock : tallaStock;
 
-    const existeDuplicado = lineas.some(
-      (l) => l.producto_id === productoId
-        && (l.talla_stock ?? "") === (stockId ?? "")
-        && (l.talla_vendida ?? "") === ((vendidaId || stockId) ?? "")
-    );
-    if (existeDuplicado) {
-      setError("Ya existe este producto en el viaje (misma talla). Modificá la cantidad existente.");
-      return;
-    }
-
     if (stockId && dispLocal(productoId, stockId) < cant) {
       setError(`Stock insuficiente: solo hay ${dispLocal(productoId, stockId)} disponible en esa talla`);
       return;
@@ -936,28 +932,43 @@ function EditarViajeModal({
     const tallas = tallasPorProducto[productoId] ?? [];
     const stockSel = tallas.find((t) => t.id === stockId);
     const vendidaSel = tallas.find((t) => t.id === vendidaId);
-    setNuevoN((n) => n + 1);
-    setLineas((prev) => [
-      ...prev,
-      {
-        key: `nuevo-${nuevoN}`,
-        imei: p.imei,
-        nombre: p.nombre,
-        talla_stock: stockId,
-        talla_stock_nombre: stockSel?.nombre ?? null,
-        talla_vendida: vendidaId || null,
-        talla_vendida_nombre: vendidaSel?.nombre ?? null,
-        producto_id: p.id,
-        cantidad: cant,
-        precio: Number(precio || 0),
-        entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
-        genero,
-        es_extra_motorizado: false,
-        vpu_count: 0,
-        pendiente_retorno: false,
-        vpu_a_restar: 0,
-      },
-    ]);
+
+    const claveMerge = `${productoId}|${stockId}|${(vendidaId || stockId)}`;
+    const idxExistente = lineas.findIndex(
+      (l) => `${l.producto_id}|${l.talla_stock}|${l.talla_vendida}` === claveMerge
+    );
+    if (idxExistente >= 0) {
+      setLineas((prev) =>
+        prev.map((l, i) =>
+          i === idxExistente
+            ? { ...l, cantidad: l.cantidad + cant }
+            : l
+        )
+      );
+    } else {
+      setNuevoN((n) => n + 1);
+      setLineas((prev) => [
+        ...prev,
+        {
+          key: `nuevo-${nuevoN}`,
+          imei: p.imei,
+          nombre: p.nombre,
+          talla_stock: stockId,
+          talla_stock_nombre: stockSel?.nombre ?? null,
+          talla_vendida: vendidaId || null,
+          talla_vendida_nombre: vendidaSel?.nombre ?? null,
+          producto_id: p.id,
+          cantidad: cant,
+          precio: Number(precio || 0),
+          entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
+          genero,
+          es_extra_motorizado: false,
+          vpu_count: 0,
+          pendiente_retorno: false,
+          vpu_a_restar: 0,
+        },
+      ]);
+    }
     setProductoId("");
     setTallaStock("");
     setEntalle(false);
@@ -1187,8 +1198,7 @@ function EditarViajeModal({
                 <Input label="Precio (S/)" type="number" step="0.01" value={precio} onChange={(e) => setPrecio(e.target.value)} className="md:col-span-2" />
                 <Select label="Género" value={genero} onChange={(e) => setGenero(e.target.value)} className="md:col-span-2">
                   <option value="dama">Dama</option>
-                  <option value="varon">Varón</option>
-                  <option value="unisex">Unisex</option>
+                  <option value="caballero">Caballero</option>
                 </Select>
                 <div className="flex items-end md:col-span-1">
                   <Button size="sm" onClick={agregar} className="w-full">+</Button>
@@ -1761,28 +1771,42 @@ function NuevoViajeEntregaModal({
     const tallas = tallasPorProducto[productoId] ?? [];
     const stockSel = tallas.find((t) => t.id === stockId);
     const vendidaSel = tallas.find((t) => t.id === vendidaId);
-    setNuevoN((n) => n + 1);
-    setLineas((prev) => [
-      ...prev,
-      {
-        key: `nuevo-${nuevoN}`,
-        imei: p.imei,
-        nombre: p.nombre,
-        talla_stock: stockId,
-        talla_stock_nombre: stockSel?.nombre ?? null,
-        talla_vendida: vendidaId || null,
-        talla_vendida_nombre: vendidaSel?.nombre ?? null,
-        producto_id: p.id,
-        cantidad: cant,
-        precio: Number(precio || 0),
-        entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
-        genero,
-        es_extra_motorizado: false,
-        vpu_count: 0,
-        pendiente_retorno: false,
-        vpu_a_restar: 0,
-      },
-    ]);
+    const claveMerge = `${p.id}|${stockId}|${vendidaId}`;
+    const idxExistente = lineas.findIndex(
+      (l) => `${l.producto_id}|${l.talla_stock}|${l.talla_vendida}` === claveMerge
+    );
+    if (idxExistente >= 0) {
+      setLineas((prev) =>
+        prev.map((l, i) =>
+          i === idxExistente
+            ? { ...l, cantidad: l.cantidad + cant }
+            : l
+        )
+      );
+    } else {
+      setNuevoN((n) => n + 1);
+      setLineas((prev) => [
+        ...prev,
+        {
+          key: `nuevo-${nuevoN}`,
+          imei: p.imei,
+          nombre: p.nombre,
+          talla_stock: stockId,
+          talla_stock_nombre: stockSel?.nombre ?? null,
+          talla_vendida: vendidaId || null,
+          talla_vendida_nombre: vendidaSel?.nombre ?? null,
+          producto_id: p.id,
+          cantidad: cant,
+          precio: Number(precio || 0),
+          entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
+          genero,
+          es_extra_motorizado: false,
+          vpu_count: 0,
+          pendiente_retorno: false,
+          vpu_a_restar: 0,
+        },
+      ]);
+    }
     setProductoId("");
     setTallaStock("");
     setEntalle(false);
@@ -2457,28 +2481,42 @@ function EditarProductosModal({
     }
     const stockSel = tallas.find((t) => t.id === stockId);
     const vendidaSel = tallas.find((t) => t.id === vendidaId);
-    setNuevoN((n) => n + 1);
-    setLineas((prev) => [
-      ...prev,
-      {
-        id: `nuevo-${nuevoN}`,
-        imei: p.imei,
-        nombre: p.nombre,
-        talla_stock: stockId,
-        talla_stock_nombre: stockSel?.nombre ?? null,
-        talla_vendida: vendidaId || null,
-        talla_vendida_nombre: vendidaSel?.nombre ?? null,
-        producto_id: p.id,
-        cantidad: cant,
-        precio: Number(precio || 0),
-        entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
-        esNueva: true,
-        originalCantidad: cant,
-        originalPrecio: Number(precio || 0),
-        originalTallaStock: stockId,
-        originalTallaVendida: vendidaId || null,
-      },
-    ]);
+    const claveMerge = `${p.id}|${stockId}|${vendidaId}`;
+    const idxExistente = lineas.findIndex(
+      (l) => `${l.producto_id}|${l.talla_stock}|${l.talla_vendida}` === claveMerge
+    );
+    if (idxExistente >= 0) {
+      setLineas((prev) =>
+        prev.map((l, i) =>
+          i === idxExistente
+            ? { ...l, cantidad: l.cantidad + cant }
+            : l
+        )
+      );
+    } else {
+      setNuevoN((n) => n + 1);
+      setLineas((prev) => [
+        ...prev,
+        {
+          id: `nuevo-${nuevoN}`,
+          imei: p.imei,
+          nombre: p.nombre,
+          talla_stock: stockId,
+          talla_stock_nombre: stockSel?.nombre ?? null,
+          talla_vendida: vendidaId || null,
+          talla_vendida_nombre: vendidaSel?.nombre ?? null,
+          producto_id: p.id,
+          cantidad: cant,
+          precio: Number(precio || 0),
+          entalle: Boolean(stockId && vendidaId && stockId !== vendidaId),
+          esNueva: true,
+          originalCantidad: cant,
+          originalPrecio: Number(precio || 0),
+          originalTallaStock: stockId,
+          originalTallaVendida: vendidaId || null,
+        },
+      ]);
+    }
     setProductoId("");
     setTallaStock("");
     setEntalle(false);
@@ -2781,8 +2819,9 @@ function EditarProductosModal({
                       <input
                         type="number"
                         step="0.01"
+                        min={0}
                         value={l.precio}
-                        onChange={(e) => actualizarLinea(l.id, { precio: Number(e.target.value) })}
+                        onChange={(e) => actualizarLinea(l.id, { precio: Math.max(0, Number(e.target.value)) })}
                         className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>

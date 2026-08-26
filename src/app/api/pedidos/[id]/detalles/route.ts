@@ -52,6 +52,34 @@ export async function POST(
 
   const subtotal = cantidad * precioUnitario;
 
+  // Verificar si ya existe un detalle con la misma (producto, talla_stock, talla_vendida)
+  const { data: existente } = await supabase
+    .from("detalles_pedido")
+    .select("id, cantidad, subtotal")
+    .eq("pedido_id", id)
+    .eq("producto_id", productoId)
+    .eq("talla_stock", tallaStock)
+    .eq("talla_vendida", tallaVendida)
+    .single();
+
+  if (existente) {
+    // Mergear: sumar cantidades y subtotales
+    const nuevaCant = Number(existente.cantidad) + cantidad;
+    const nuevoSubtotal = Number(existente.subtotal) + subtotal;
+    const { data: detalle, error: err } = await supabase
+      .from("detalles_pedido")
+      .update({ cantidad: nuevaCant, subtotal: nuevoSubtotal })
+      .eq("id", existente.id)
+      .select("*, productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre)")
+      .single();
+    if (err || !detalle) {
+      return Response.json({ error: `No se pudo actualizar el detalle: ${err?.message ?? "sin detalle"}` }, { status: 500 });
+    }
+    const montoTotal = await sincronizarTotalesPedido(id);
+    await supabase.from("pedidos").update({ monto_total: montoTotal }).eq("id", id);
+    return Response.json({ detalle, monto_total: montoTotal }, { status: 200 });
+  }
+
   const { data: detalle, error: err } = await supabase
     .from("detalles_pedido")
     .insert({

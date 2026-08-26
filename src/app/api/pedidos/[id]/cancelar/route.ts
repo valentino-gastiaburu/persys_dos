@@ -60,7 +60,7 @@ export async function POST(
       unidadesAlistadas = vpus ?? [];
     }
 
-    // 5. Devolver unidades al stock
+    // 5. Devolver unidades al stock y marcar VPUs como devueltos
     if (unidadesAlistadas.length > 0) {
       const updates = unidadesAlistadas.map((vpu) =>
         supabase
@@ -69,6 +69,14 @@ export async function POST(
           .eq("id", vpu.producto_unico_id)
       );
       await Promise.all(updates);
+
+      // Marcar VPUs como devueltos para que no aparezcan en "Pendientes a regresar"
+      const viajeIdsSet = new Set(viajeIds);
+      await supabase
+        .from("viaje_producto_unicos")
+        .update({ estado: "devuelto" })
+        .in("viaje_id", viajeIds)
+        .not("estado", "eq", "devuelto");
     }
 
     // 6. Cancelar los viajes que no estén terminados/entregados

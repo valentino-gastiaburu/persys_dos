@@ -440,31 +440,29 @@ export async function PATCH(
     const tieneVPUsActivos = (vpuActivosCount ?? 0) > 0;
 
     if (!tieneVPUsActivos) {
-      // Reemplazo total limpio
+      // Reemplazo total limpio — atómico vía función PostgreSQL.
+      // DELETE + INSERT dentro de la misma transacción; si algo falla, nada se persiste.
 
-      // Eliminar detalles anteriores
-      await supabase.from("detalles_pedido").delete().eq("viaje_id", id);
+      const detalles = lineas.map((l) => ({
+        producto_id: l.producto_id,
+        talla_stock: l.talla_stock || "",
+        talla_vendida: (l.entalle ? (l.talla_vendida ?? l.talla_stock) : l.talla_stock) || "",
+        entalle: Boolean(l.talla_stock && l.talla_vendida && l.talla_stock !== l.talla_vendida && l.entalle),
+        cantidad: Number(l.cantidad),
+        precio_unitario: Number(l.precio_unitario ?? 0),
+        subtotal: Number(l.cantidad) * Number(l.precio_unitario ?? 0),
+        genero: ["dama", "caballero"].includes(l.genero) ? l.genero : "dama",
+        es_extra_motorizado: Boolean(l.es_extra_motorizado),
+      }));
 
-      if (lineas.length > 0) {
-        const detalles = lineas.map((l) => ({
-          pedido_id: viaje.pedido_id,
-          viaje_id: id,
-          producto_id: l.producto_id,
-          talla_stock: l.talla_stock || null,
-          talla_vendida: (l.entalle ? (l.talla_vendida ?? l.talla_stock) : l.talla_stock) || null,
-          entalle: Boolean(l.talla_stock && l.talla_vendida && l.talla_stock !== l.talla_vendida && l.entalle),
-          cantidad: Number(l.cantidad),
-          precio_unitario: Number(l.precio_unitario ?? 0),
-          subtotal: Number(l.cantidad) * Number(l.precio_unitario ?? 0),
-          genero: l.genero || "dama",
-          es_extra_motorizado: Boolean(l.es_extra_motorizado),
-          anadido_por: user.id,
-          confirmado_el: new Date().toISOString(),
-        }));
-        const { error: errDet } = await supabase.from("detalles_pedido").insert(detalles);
-        if (errDet) {
-          return Response.json({ error: "No se pudieron guardar los productos" }, { status: 500 });
-        }
+      const { error: errDet } = await supabase.rpc("replace_viaje_detalles", {
+        p_viaje_id: id,
+        p_pedido_id: viaje.pedido_id,
+        p_anadido_por: user.id,
+        p_detalles: detalles,
+      });
+      if (errDet) {
+        return Response.json({ error: "No se pudieron guardar los productos" }, { status: 500 });
       }
     } else {
       // Alistado: re-vincular huérfanos, actualizar cantidades, agregar nuevos, eliminar los que sobran.
