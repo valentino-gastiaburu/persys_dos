@@ -311,8 +311,20 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - **`viaje_producto_unicos`**: `pendiente` → `alistado` (al escanear) → `enviado` (al enviar) →
   `devuelto` (al terminar recojo o via retorno-stock). Los VPU pendientes en viajes cancelados
   o recojos activos aparecen en la sección "Pendientes a regresar al stock".
-- **Edición de pedido bloqueada**: una vez creado un viaje, `puedeEditar = false` siempre.
-  Solo se puede gestionar viajes (crear viaje extra o de regreso).
+- **Edición de viaje alistado (VPU-aware)** (22/ago/2026):
+  - Reducir cantidad con VPU asignado → exceso se pinta rojo, pasa a "Pendientes de devolver".
+  - Eliminar (✕) con VPU → cantidad = 0, todos los VPUs quedan como pendientes de devolver.
+  - Sin duplicados: no dos detalles con mismo `producto_id + talla_stock + talla_vendida`.
+  - Si se normaliza (cantidad = vpu_count), sale del estado rojo.
+  - Pedido muestra "Pendiente de retiro de productos" y **bloquea** cualquier cambio de estado.
+  - `vpus_a_restar` y `detalles_a_desvincular` handlers eliminados del PATCH /api/viajes/[id].
+  - Handler alistado re-vincula huérfanos, actualiza cantidades (incluyendo 0), inserta nuevos, elimina sin VPU.
+  - `detalles_a_desvincular` handler se mantiene para backward compat pero el frontend ya no lo envía.
+- **`tienePendientesRetiro(pedidoId)`** en `src/lib/pedidos.ts`: retorna número de VPUs excedentes
+  (vpu_count > cantidad) en viajes activos. Se usa para bloquear estados del pedido.
+- **Bloqueo de estado del pedido**: `/api/pedidos/[id]/estado` y `/confirmar` verifican
+  `tienePendientesRetiro` antes de procesar. Badge rojo visual en detalle del pedido.
+- **Migración 16** (`supabase/16_cantidad_cero.sql`): `CHECK (cantidad >= 0)` — permite cantidad = 0.
 
 ## GitHub
 
@@ -339,16 +351,58 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 
 ## Wipe de BD (procedimiento de testing)
 
-Se hizo wipe completo 2 veces (20/ago/2026) para testing limpio. Procedimiento:
-1. `DELETE FROM historial_producto_unicos;`
-2. `DELETE FROM movimientos_stock;`
-3. `DELETE FROM inconsistencias;`
-4. `DELETE FROM pagos;`
-5. `DELETE FROM viaje_producto_unicos;`
-6. `DELETE FROM detalles_pedido;`
-7. `DELETE FROM viajes;`
-8. `DELETE FROM pedidos;`
-9. Restaurar productos: `UPDATE productos_unicos SET estado = 'en_almacen', fecha_salida = NULL, tanda_id = NULL;`
-10. Eliminar tandas: `DELETE FROM tandas;`
+Se hizo wipe completo 3 veces (20–22/ago/2026) para testing limpio. Procedimiento vía REST:
+1. `DELETE FROM viaje_producto_unicos WHERE id = neq.0000...` (curl)
+2. `UPDATE productos_unicos SET estado = 'en_almacen' WHERE estado = neq.en_almacen` (curl)
+3. `DELETE FROM historial_producto_unicos` (curl)
+4. `DELETE FROM historial_pedidos` (curl)
+5. `DELETE FROM pagos` (curl)
+6. `DELETE FROM detalles_pedido` (curl)
+7. `DELETE FROM viajes` (curl)
+8. `DELETE FROM pedidos` (curl)
 
 **NOTA:** El wipe NO toca las migraciones (03, 04, 05, 07, 08, 09). Solo limpia datos.
+**NOTA:** El orden importa por FK constraints: historial → pagos → detalles → viajes → pedidos.
+
+## Aprendizajes de la sesión 22/ago/2026
+
+### Consistencia de estado viaje ↔ VPUs
+- **Regla:** Un viaje `alistado` SIN VPUs activos es inconsistente → revertir a `programado`.
+  Implementado en PATCH `/api/viajes/[id]` al final del handler `alistado`: si count VPUs
+  no-devueltos = 0 → update estado a `programado` + `syncEstadoPedidoPorViajes`.
+- **Optimización:** Si el viaje es `alistado` pero tiene 0 VPUs activos, el PATCH lo trata
+  como `programado` (reemplazo total: delete all + insert). Esto evita la lógica de
+  reconciliación compleja del handler `alistado` que causaba duplicación de detalles.
+
+### Detalles zombie (cantidad=0 sin VPU)
+- El handler `alistado` actualizaba detalles a `cantidad=0` pero NUNCA los eliminaba si su
+  key seguía en el array `lineas`. **Fix:** después de procesar lineas, eliminar detalles
+  con `cantidad=0` y sin VPUs activos (no devueltos).
+- El GET `/api/pedidos/[id]` ahora filtra detalles `cantidad=0` + `vpu_count=0` para que
+  no se muestren en el frontend.
+
+### vpu_count en TODAS las líneas (no solo huérfanas)
+- Antes, `GET /api/pedidos/[id]` solo asignaba `vpu_count` a detalles huérfanos (los
+  desvinculados del viaje pero con VPU asignado). Las líneas normales tenían `vpu_count
+  = undefined → 0`, haciendo imposible detectar exceso en el ViajeCard.
+- **Fix:** query `allVpus` (excluye devueltos) construye `vpuCountMap` y se adjunta a cada
+  línea de `lineasPorViaje`. Ahora el ViajeCard muestra el badge rojo "Pendiente a devolver
+  a stock" y las filas resaltadas sin abrir el modal.
+
+### Botones +/- en vez de input numérico
+- Los inputs numéricos eran problemáticos: no funcionaban bien en móvil, no tenían límites
+  claros, y permitían valores absurdos (ej. 10000).
+- **Solución:** botones `−` y `+` con display del valor entre ellos.
+  - `−`: deshabilitado cuando `cantidad <= minCant` (0 para alistado, 1 para programado)
+  - `+`: deshabilitado cuando `stockLibres <= 0`
+  - Valor mostrado como texto fijo (no input editable)
+
+### Lógica de stock en edición de cantidades
+- `cantidad_ventas` (del API `/api/tallas`) YA tiene las unidades de ESTE viaje restadas
+  (son "comprometidas"). Entonces:
+  - `libres = cantidad_ventas - otras_líneas_en_este_modal`
+  - `maxPermitido = cantidad_actual + libres` (NO solo `libres`)
+- **Bug común:** usar solo `libres` como máximo → si viaje tiene 2 y hay 2 libres,
+  max sería 2 y no se podría subir a 4. El fix es sumar `l.cantidad + libres`.
+- El mismo cálculo se replica en `manejarCambioCantidad` (handler) y en el JSX del botón
+  `+` (para decidir si se habilita o deshabilita).

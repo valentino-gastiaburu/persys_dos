@@ -83,9 +83,37 @@ export async function GET(
     });
   }
 
+  // Contar VPUs por detalle para TODOS los viajes (excluyendo devueltos)
+  const viajeIds = (viajesData ?? []).map((v: any) => v.id);
+  const vpuCountMap: Record<string, number> = {};
+  if (viajeIds.length > 0) {
+    const { data: allVpus } = await supabase
+      .from("viaje_producto_unicos")
+      .select("detalle_pedido_id")
+      .in("viaje_id", viajeIds)
+      .not("estado", "eq", "devuelto");
+    for (const vpu of allVpus ?? []) {
+      if (vpu.detalle_pedido_id) {
+        vpuCountMap[vpu.detalle_pedido_id] = (vpuCountMap[vpu.detalle_pedido_id] ?? 0) + 1;
+      }
+    }
+  }
+  // Adjuntar vpu_count a cada línea normal
+  for (const viajeId of Object.keys(lineasPorViaje)) {
+    for (const linea of lineasPorViaje[viajeId]) {
+      linea.vpu_count = vpuCountMap[linea.id] ?? 0;
+    }
+  }
+
+  // Eliminar detalles zombie: cantidad=0 y sin VPUs activos
+  for (const viajeId of Object.keys(lineasPorViaje)) {
+    lineasPorViaje[viajeId] = lineasPorViaje[viajeId].filter(
+      (l) => !(l.cantidad === 0 && l.vpu_count === 0)
+    );
+  }
+
   // Detalles huérfanos: desvinculados del viaje pero con VPU todavía asignado.
   // Estos aparecen como "Pendiente a devolver al stock" en la tarjeta del viaje.
-  const viajeIds = (viajesData ?? []).map((v: any) => v.id);
   const detallesHuermanos: Record<string, any[]> = {};
   if (viajeIds.length > 0) {
     const { data: vpuRows } = await supabase

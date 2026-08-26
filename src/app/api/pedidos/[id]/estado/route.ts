@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { registrarHistorialPedido } from "@/lib/pedidos";
+import { registrarHistorialPedido, tienePendientesRetiro } from "@/lib/pedidos";
 
 // Transiciones manuales de estado del pedido.
 const TRANSICIONES: Record<string, string[]> = {
@@ -40,6 +40,15 @@ export async function POST(
   if (!permitidos.includes(nuevoEstado)) {
     return Response.json(
       { error: `No se puede pasar de "${pedido.estado}" a "${nuevoEstado}"` },
+      { status: 400 }
+    );
+  }
+
+  // Bloquear si hay productos pendientes de retiro
+  const exceso = await tienePendientesRetiro(id);
+  if (exceso > 0) {
+    return Response.json(
+      { error: `No se puede cambiar el estado: hay ${exceso} producto(s) pendiente(s) de retiro` },
       { status: 400 }
     );
   }

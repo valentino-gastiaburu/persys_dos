@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { registrarHistorialPedido, syncEstadoPedidoPorViajes, recalcularTotalViaje, sincronizarTotalesPedido } from "@/lib/pedidos";
+import { registrarHistorialPedido, syncEstadoPedidoPorViajes, recalcularTotalViaje, sincronizarTotalesPedido, recalcularEstadoViaje } from "@/lib/pedidos";
 
 // GET /api/viajes/[id] — detalle del viaje: productos a alistar + alistados
 export async function GET(
@@ -431,16 +431,16 @@ export async function PATCH(
       es_extra_motorizado?: boolean;
     }[] = body.lineas;
 
-    if (viaje.estado === "programado") {
-      // Reemplazo total: verificar que no haya VPU escaneados
-      const { data: existentes } = await supabase
-        .from("viaje_producto_unicos")
-        .select("id")
-        .eq("viaje_id", id)
-        .limit(1);
-      if ((existentes?.length ?? 0) > 0) {
-        return Response.json({ error: "Ya hay productos alistados en este viaje. Quita los productos alistados primero." }, { status: 400 });
-      }
+    // Consultar VPUs activos (no devueltos) para decidir handler
+    const { count: vpuActivosCount } = await supabase
+      .from("viaje_producto_unicos")
+      .select("id", { count: "exact", head: true })
+      .eq("viaje_id", id)
+      .not("estado", "eq", "devuelto");
+    const tieneVPUsActivos = (vpuActivosCount ?? 0) > 0;
+
+    if (!tieneVPUsActivos) {
+      // Reemplazo total limpio
 
       // Eliminar detalles anteriores
       await supabase.from("detalles_pedido").delete().eq("viaje_id", id);
@@ -466,7 +466,7 @@ export async function PATCH(
           return Response.json({ error: "No se pudieron guardar los productos" }, { status: 500 });
         }
       }
-    } else if (viaje.estado === "alistado") {
+    } else {
       // Alistado: re-vincular huérfanos, actualizar cantidades, agregar nuevos, eliminar los que sobran.
 
       // Obtener detalles existentes en el viaje
@@ -481,10 +481,14 @@ export async function PATCH(
       const existenteIds = existentesList.map((e) => e.id);
       const { data: vpuExistentes } = await supabase
         .from("viaje_producto_unicos")
-        .select("detalle_pedido_id")
+        .select("detalle_pedido_id, estado")
         .eq("viaje_id", id)
         .in("detalle_pedido_id", existenteIds);
       const detallesConVpu = new Set((vpuExistentes ?? []).map((v) => v.detalle_pedido_id));
+      // VPUs activos (no devueltos) — para limpieza de detalles cantidad=0
+      const detallesConVpuActivos = new Set(
+        (vpuExistentes ?? []).filter((v) => v.estado !== "devuelto").map((v) => v.detalle_pedido_id)
+      );
 
       // Re-vincular detalles huérfanos (viaje_id = null) que están siendo restaurados
       const lineasConDetalle = lineas.filter((l) => l.detalle_id);
@@ -553,6 +557,17 @@ export async function PATCH(
         }
       }
 
+      // Eliminar detalles con cantidad=0 y sin VPUs activos (devueltos no cuentan)
+      const aLimpiar = existentesList.filter(
+        (e) => Number(e.cantidad) === 0 && !detallesConVpuActivos.has(e.id)
+      );
+      if (aLimpiar.length > 0) {
+        await supabase
+          .from("detalles_pedido")
+          .delete()
+          .in("id", aLimpiar.map((e) => e.id));
+      }
+
       // Insertar detalles NUEVOS (que no existan ya en el viaje ni sean huérfanos restaurados)
       if (lineas.length > 0) {
         const existentesSet = new Set(
@@ -586,7 +601,7 @@ export async function PATCH(
     }
 
     await recalcularTotalViaje(id, viaje.tipo, viaje.costo_envio);
-    await sincronizarTotalesPedido(viaje.pedido_id);
+    await recalcularEstadoViaje(id);
   }
 
   // ── Desvincular detalles (quitar productos con VPU asignado) ──
@@ -633,34 +648,6 @@ export async function PATCH(
         await sincronizarTotalesPedido(viaje.pedido_id);
       }
     }
-  }
-
-  // ── Reducir VPUs de detalles (bajar cantidad) ──
-  if (body.vpus_a_restar !== undefined && esActivo) {
-    const entries = Object.entries(body.vpus_a_restar as Record<string, number>);
-    for (const [detalleId, count] of entries) {
-      const n = Number(count);
-      if (!detalleId || n <= 0) continue;
-
-      // Actualizar cantidad del detalle
-      const { data: detActual } = await supabase
-        .from("detalles_pedido")
-        .select("cantidad")
-        .eq("id", detalleId)
-        .single();
-      if (detActual) {
-        const nuevaCantidad = Math.max(0, Number(detActual.cantidad) - n);
-        await supabase
-          .from("detalles_pedido")
-          .update({ cantidad: nuevaCantidad })
-          .eq("id", detalleId);
-      }
-      // Los VPUs excedentes quedan en el viaje.
-      // El cálculo de pendientes_retorno detecta VPUs > cantidad del detalle.
-      // Almacén los devuelve manualmente via retorno-stock.
-    }
-    await recalcularTotalViaje(id, viaje.tipo, viaje.costo_envio);
-    await sincronizarTotalesPedido(viaje.pedido_id);
   }
 
   // ── Modificar productos de recojo (agregar/quitar detalles) ──

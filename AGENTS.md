@@ -26,3 +26,28 @@ usuario defina nuevos flujos o reglas.
   veces no recarga módulos de `lib/` correctamente durante hot reload. Solución: matar el
   proceso `next dev` y levantarlo de nuevo. Esto ya causó ~30 min de debugging perdidos porque
   el código era correcto pero el server ejecutaba versión vieja.
+
+## Reglas de diseño de UI
+
+- **No usar `Input` de type number para cantidades en viajes**: usar botones `+` / `−`
+  con display del valor. Los inputs numéricos son problemáticos en móvil y no tienen
+  límites visuales. La lógica de stock se replica en el handler (`manejarCambioCantidad`)
+  y en el JSX del botón.
+
+## Reglas de stock en edición de viajes
+
+- `cantidad_ventas` (API `/api/tallas`) YA descuenta las unidades de ESTE viaje
+  (son "comprometidas"). Entonces:
+  - `libres = cantidad_ventas - otras_líneas_en_este_modal`
+  - `maxPermitido = cantidad_actual + libres` (NUNCA solo `libres`)
+- Si `cantidad_ventas = 0` y el viaje tiene 2, max = 2 + 0 = 2. Correcto.
+- Si `cantidad_ventas = 2` y el viaje tiene 2, max = 2 + 2 = 4. Correcto.
+
+## Reglas de consistencia de estado viaje ↔ VPUs
+
+- Un viaje `alistado` SIN VPUs activos es inconsistente → revertir a `programado`.
+- En PATCH, si el viaje es `alistado` pero tiene 0 VPUs activos, tratarlo como
+  `programado` (reemplazo total limpio: delete all + insert) en vez de la lógica
+  de reconciliación compleja del handler `alistado`.
+- Limpieza automática: detalles con `cantidad=0` y sin VPUs activos se eliminan
+  al guardar el viaje.

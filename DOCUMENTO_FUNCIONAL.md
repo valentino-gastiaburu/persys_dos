@@ -261,6 +261,28 @@
   muestra viajes con `pendientes_retorno > 0`. Solo muestra viajes **cancelados** o
   de **recojo activo**. Incluye panel inline con escaneo y búsqueda manual.
 
+#### 4.6.3 Edición de viaje alistado (VPU-aware)
+
+- **Viajes programados** se editan igual que antes (agregar/quitar productos libremente).
+- **Viajes alistados** se editan con reglas VPU-aware:
+  - **Reducir cantidad** con VPU asignado: la diferencia se marca en rojo ("exceso: N")
+    y pasa a "Pendientes de devolver". Almacén debe retirar esas unidades.
+  - **Eliminar (✕) con VPU**: pone cantidad a 0. Sin VPU → desaparece del listado.
+    Con VPU → todos quedan como pendientes de devolver.
+  - **Sin duplicados**: no se puede agregar un producto que ya esté en el viaje
+    (mismo `producto_id + talla_stock + talla_vendida`).
+  - **Restaurar**: en la sección "Pendientes de devolver", el botón Restaurar devuelve
+    la cantidad a `vpu_count` (normaliza el exceso).
+  - **Bloqueo de estado del pedido**: si hay pendientes de retiro, el pedido no puede
+    cambiar de estado (confirmar, revertir a solicitado). Se muestra badge rojo
+    "Pendiente de retiro de productos (N u.)".
+  - **Backend**: los handlers `vpus_a_restar` y `detalles_a_desvincular` fueron
+    eliminados. El backend acepta solo `lineas[]` y maneja:
+    - Re-vincular huérfanos (viaje_id = null) si tienen `detalle_id`
+    - Actualizar cantidades existentes (incluyendo cantidad = 0)
+    - Insertar nuevos detalles
+    - Eliminar detalles sin VPU que ya no están en las lineas
+
 ### 4.7 Pedido = colección de viajes (viajes extra y devoluciones)
 
 - Cuando un pedido está **`entregado`** (o `esperando_*`/`cerrado`), la única forma

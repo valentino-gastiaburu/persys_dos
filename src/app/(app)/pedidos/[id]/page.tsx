@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
@@ -197,9 +197,17 @@ export default function PedidoDetallePage() {
   if (!pedido) return <ErrorBanner message={error ?? "Pedido no encontrado"} />;
 
   const deuda = Number(pedido.monto_total) - totalPagado;
-  const puedeConfirmar = ["borrador", "solicitado"].includes(pedido.estado);
+  const totalPendienteRetiro = viajes
+    .filter((v) => v.estado !== "cancelado" && v.estado !== "terminado")
+    .flatMap((v) => v.lineas)
+    .reduce((sum, l) => {
+      const vpuCount = l.vpu_count ?? 0;
+      return sum + Math.max(0, vpuCount - l.cantidad);
+    }, 0);
+  const hayPendientesRetiro = totalPendienteRetiro > 0;
+  const puedeConfirmar = ["borrador", "solicitado"].includes(pedido.estado) && !hayPendientesRetiro;
   const puedeCancelar = ["solicitado", "confirmado"].includes(pedido.estado);
-  const puedeVolverSolicitado = pedido.estado === "confirmado";
+  const puedeVolverSolicitado = pedido.estado === "confirmado" && !hayPendientesRetiro;
   const tuvoViajes = viajes.length > 0;
   const puedeEditar = !tuvoViajes && ["borrador", "solicitado", "confirmado", "alistado"].includes(pedido.estado);
   const puedeCrearViajes =
@@ -289,6 +297,11 @@ export default function PedidoDetallePage() {
             <span className="text-slate-300">/</span>
             <h1 className="text-2xl font-bold text-slate-800">{pedido.codigo}</h1>
             <Badge color={ESTADO_BADGE[pedido.estado] ?? "slate"}>{ESTADO_LABEL[pedido.estado] ?? pedido.estado}</Badge>
+            {hayPendientesRetiro && (
+              <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                Pendiente de retiro de productos ({totalPendienteRetiro} u.)
+              </span>
+            )}
           </div>
           <p className="mt-1 text-sm text-slate-500">
             {pedido.clientes
@@ -296,17 +309,17 @@ export default function PedidoDetallePage() {
               : "Sin cliente"}
           </p>
         </div>
-        {puedeConfirmar && (
+        {["borrador", "solicitado"].includes(pedido.estado) && (
           <div className="flex gap-2">
-            <Button onClick={confirmar} disabled={confirmando}>
+            <Button onClick={confirmar} disabled={confirmando || hayPendientesRetiro}>
               {confirmando ? "CONFIRMANDO..." : "Confirmar pedido"}
             </Button>
           </div>
         )}
         {puedeCancelar && (
           <div className="flex gap-2">
-            {puedeVolverSolicitado && (
-              <Button variant="secondary" onClick={() => cambiarEstado("solicitado")} disabled={cambiandoEstado}>
+            {pedido.estado === "confirmado" && (
+              <Button variant="secondary" onClick={() => cambiarEstado("solicitado")} disabled={cambiandoEstado || hayPendientesRetiro}>
                 {cambiandoEstado ? "PROCESANDO..." : "Regresar a 'Solicitado'"}
               </Button>
             )}
@@ -389,8 +402,11 @@ export default function PedidoDetallePage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {lineasFinales.map((l) => (
-                        <tr key={l.id}>
+                      {lineasFinales.map((l) => {
+                        const vpuCount = l.vpu_count ?? 0;
+                        const tieneExceso = vpuCount > 0 && vpuCount > l.cantidad;
+                        return (
+                        <tr key={l.id} className={tieneExceso ? "bg-red-50" : ""}>
                           <td className="border-r border-slate-200 px-3 py-2 font-mono text-xs text-slate-500">{l.imei}</td>
                           <td className="border-r border-slate-200 px-3 py-2 font-medium text-slate-800">
                             {l.producto_nombre}
@@ -410,6 +426,8 @@ export default function PedidoDetallePage() {
                               <Badge color="green">Devuelto</Badge>
                             ) : l.estado === "pendiente_devolucion" ? (
                               <Badge color="red">Pendiente de devolución</Badge>
+                            ) : tieneExceso ? (
+                              <Badge color="red">Pendiente a devolver a stock</Badge>
                             ) : l.viaje_estado === "alistado" ? (
                               <Badge color="blue">Alistado</Badge>
                             ) : l.viaje_estado === "enviado" ? (
@@ -425,7 +443,8 @@ export default function PedidoDetallePage() {
                             S/ {Number(l.subtotal).toFixed(2)}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -514,14 +533,23 @@ export default function PedidoDetallePage() {
                     <div className="mt-2 border-t border-slate-200 pt-3">
                       <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Cancelados</p>
                       {viajesCancelados.map((v) => (
-                        <div
-                          key={v.id}
-                          className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs text-slate-400 opacity-60"
-                        >
-                          <span className="line-through">{v.codigo}</span>
-                          <span>{v.tipo}</span>
-                          <Badge color="red">Cancelado</Badge>
-                        </div>
+                        v.lineas && v.lineas.length > 0 ? (
+                          <div key={v.id} className="mb-2">
+                            <ViajeCard
+                              viaje={v}
+                              inconsistencias={inconsistencias.filter((i) => i.entidad_id === v.id)}
+                            />
+                          </div>
+                        ) : (
+                          <div
+                            key={v.id}
+                            className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs text-slate-400 opacity-60"
+                          >
+                            <span className="line-through">{v.codigo}</span>
+                            <span>{v.tipo}</span>
+                            <Badge color="red">Cancelado</Badge>
+                          </div>
+                        )
                       ))}
                     </div>
                   )}
@@ -677,6 +705,7 @@ export default function PedidoDetallePage() {
       {cancelarViajeId && (
         <CancelarViajeModal
           viajeId={cancelarViajeId}
+          esUnicoViaje={viajesActivos.length === 1}
           onClose={() => setCancelarViajeId(null)}
           onDone={() => {
             setCancelarViajeId(null);
@@ -690,10 +719,12 @@ export default function PedidoDetallePage() {
 
 function CancelarViajeModal({
   viajeId,
+  esUnicoViaje,
   onClose,
   onDone,
 }: {
   viajeId: string;
+  esUnicoViaje?: boolean;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -720,14 +751,20 @@ function CancelarViajeModal({
         <>
           <Button variant="secondary" onClick={onClose}>Volver</Button>
           <Button variant="danger" onClick={cancelar} disabled={loading}>
-            {loading ? "Cancelando..." : "Sí, cancelar viaje"}
+            {loading ? "Cancelando..." : esUnicoViaje ? "Sí, cancelar viaje y pedido" : "Sí, cancelar viaje"}
           </Button>
         </>
       }
     >
-      <p className="text-sm text-slate-600">
-        Se cancelará el viaje. Si ya hay productos alistados, volverán al stock del almacén.
-      </p>
+      {esUnicoViaje ? (
+        <p className="text-sm text-slate-600">
+          <strong className="text-red-600">Este es el único viaje del pedido.</strong> Al cancelarlo se cancelará el pedido también. Los productos con unidades alistadas quedarán pendientes de retiro del almacén.
+        </p>
+      ) : (
+        <p className="text-sm text-slate-600">
+          Se cancelará el viaje. Los productos con unidades alistadas quedarán pendientes de retiro del almacén.
+        </p>
+      )}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </Modal>
   );
@@ -770,6 +807,7 @@ function EditarViajeModal({
   const [lineas, setLineas] = useState<LineaViajeNueva[]>([]);
   const [nuevoN, setNuevoN] = useState(0);
   const [vpuPorDetalle, setVpuPorDetalle] = useState<Record<string, number>>({});
+  const cantInicialRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     if (viaje.tipo === "entrega") {
@@ -786,6 +824,11 @@ function EditarViajeModal({
           setVpuPorDetalle(map);
         }
       );
+      // Cargar tallas de los productos que ya están en el viaje (para stock buttons)
+      const pidsUnicos = [...new Set(viaje.lineas.map((l) => l.producto_id))];
+      for (const pid of pidsUnicos) {
+        cargarTallas(pid);
+      }
       setLineas(
         viaje.lineas.map((l, i) => ({
           key: `existente-${i}`,
@@ -807,6 +850,12 @@ function EditarViajeModal({
           detalle_id: l.id,
         }))
       );
+      // Guardar cantidades iniciales para calcular stock máximo
+      const initMap: Record<string, number> = {};
+      for (const l of viaje.lineas) {
+        initMap[`existente-${viaje.lineas.indexOf(l)}`] = Number(l.cantidad);
+      }
+      cantInicialRef.current = initMap;
     } else if (viaje.tipo === "recojo") {
       setLineas(
         viaje.lineas.map((l) => ({
@@ -869,6 +918,17 @@ function EditarViajeModal({
     }
     const stockId = tallaStock || null;
     const vendidaId = entalle ? tallaVendida || tallaStock : tallaStock;
+
+    const existeDuplicado = lineas.some(
+      (l) => l.producto_id === productoId
+        && (l.talla_stock ?? "") === (stockId ?? "")
+        && (l.talla_vendida ?? "") === ((vendidaId || stockId) ?? "")
+    );
+    if (existeDuplicado) {
+      setError("Ya existe este producto en el viaje (misma talla). Modificá la cantidad existente.");
+      return;
+    }
+
     if (stockId && dispLocal(productoId, stockId) < cant) {
       setError(`Stock insuficiente: solo hay ${dispLocal(productoId, stockId)} disponible en esa talla`);
       return;
@@ -908,26 +968,23 @@ function EditarViajeModal({
 
   function quitar(key: string) {
     const linea = lineas.find((l) => l.key === key);
-    if (linea && linea.pendiente_retorno) {
-      const vpuCount = (linea.vpu_count || vpuPorDetalle[linea.detalle_id ?? ""]) ?? 0;
-      setLineas((prev) =>
-        prev.map((l) =>
-          l.key === key ? { ...l, pendiente_retorno: false, cantidad: vpuCount || l.cantidad || 1, vpu_a_restar: 0 } : l
-        )
-      );
+    if (!linea) return;
+    const vpuCount = (linea.vpu_count || vpuPorDetalle[linea.detalle_id ?? ""]) ?? 0;
+    if (vpuCount > 0) {
+      if (linea.cantidad > 0) {
+        // Con VPU y cantidad > 0 → bajar a 0 (todos los VPUs quedan como exceso)
+        setLineas((prev) =>
+          prev.map((l) => l.key === key ? { ...l, cantidad: 0, vpu_a_restar: vpuCount } : l)
+        );
+      } else {
+        // Con VPU y cantidad === 0 → restaurar a vpu_count (normalizar)
+        setLineas((prev) =>
+          prev.map((l) => l.key === key ? { ...l, cantidad: vpuCount, vpu_a_restar: 0 } : l)
+        );
+      }
       return;
     }
-    if (linea && !linea.pendiente_retorno) {
-      const vpuCount = (linea.vpu_count || vpuPorDetalle[linea.detalle_id ?? ""]) ?? 0;
-      if (vpuCount > 0) {
-        setLineas((prev) =>
-          prev.map((l) =>
-            l.key === key ? { ...l, pendiente_retorno: true, cantidad: 0, vpu_count: vpuCount, vpu_a_restar: 0 } : l
-          )
-        );
-        return;
-      }
-    }
+    // Sin VPU → eliminar completamente
     setLineas((prev) => prev.filter((l) => l.key !== key));
   }
 
@@ -936,8 +993,24 @@ function EditarViajeModal({
       prev.map((l) => {
         if (l.key !== key) return l;
         const vpuCount = (l.vpu_count || vpuPorDetalle[l.detalle_id ?? ""]) ?? 0;
-        const capped = vpuCount > 0 ? Math.min(nuevaCant, vpuCount) : Math.max(0, nuevaCant);
-        return { ...l, cantidad: capped, vpu_a_restar: vpuCount > 0 ? vpuCount - capped : 0, pendiente_retorno: false };
+        const tid = l.talla_stock ?? l.talla_vendida;
+        const t = (tallasPorProducto[l.producto_id] ?? []).find((x) => x.id === tid);
+        const base = t?.cantidad_ventas ?? 0;
+        // maxTotal = en_almacen estimado = cantidad_ventas + suma cantidades iniciales de este producto/talla
+        const initKeys = Object.keys(cantInicialRef.current).filter((k) => {
+          const ln = prev.find((x) => x.key === k);
+          return ln && ln.producto_id === l.producto_id && (ln.talla_stock ?? ln.talla_vendida) === tid;
+        });
+        const initTotal = initKeys.reduce((a, k) => a + (cantInicialRef.current[k] ?? 0), 0);
+        const maxTotal = base + initTotal;
+        // Restar líneas OTHER actuales (no esta)
+        const otherCurrent = prev
+          .filter((x) => x.key !== key && x.producto_id === l.producto_id && (x.talla_stock ?? x.talla_vendida) === tid)
+          .reduce((a, x) => a + x.cantidad, 0);
+        const maxPermitido = maxTotal - otherCurrent;
+        const minPermitido = esProgramado ? 1 : 0;
+        const cant = Math.max(minPermitido, Math.min(nuevaCant, maxPermitido));
+        return { ...l, cantidad: cant, vpu_a_restar: vpuCount > 0 ? Math.max(0, vpuCount - cant) : 0 };
       })
     );
   }
@@ -962,35 +1035,22 @@ function EditarViajeModal({
       }
       body.recojo_lineas = seleccionados;
     } else if (viaje.tipo === "entrega") {
-      const normales = lineas.filter((l) => !l.pendiente_retorno);
-      const marcadas = lineas.filter((l) => l.pendiente_retorno && l.detalle_id);
-      if (normales.length === 0 && marcadas.length === 0) {
+      if (lineas.length === 0) {
         setError("Agrega al menos un producto al viaje");
         setLoading(false);
         return;
       }
-      if (normales.length > 0) {
-        body.lineas = normales.map((l) => ({
-          detalle_id: l.detalle_id || undefined,
-          producto_id: l.producto_id,
-          talla_stock: l.talla_stock,
-          talla_vendida: l.entalle ? l.talla_vendida : l.talla_stock,
-          entalle: l.entalle,
-          cantidad: l.cantidad,
-          precio_unitario: l.precio,
-          genero: l.genero,
-          es_extra_motorizado: l.es_extra_motorizado,
-        }));
-      }
-      if (marcadas.length > 0) {
-        body.detalles_a_desvincular = marcadas.map((l) => l.detalle_id!);
-      }
-      const conResta = normales.filter((l) => (l.vpu_a_restar ?? 0) > 0 && l.detalle_id);
-      if (conResta.length > 0) {
-        body.vpus_a_restar = Object.fromEntries(
-          conResta.map((l) => [l.detalle_id!, l.vpu_a_restar!])
-        );
-      }
+      body.lineas = lineas.map((l) => ({
+        detalle_id: l.detalle_id || undefined,
+        producto_id: l.producto_id,
+        talla_stock: l.talla_stock,
+        talla_vendida: l.entalle ? l.talla_vendida : l.talla_stock,
+        entalle: l.entalle,
+        cantidad: l.cantidad,
+        precio_unitario: l.precio,
+        genero: l.genero,
+        es_extra_motorizado: l.es_extra_motorizado,
+      }));
     }
 
     const { error: e } = await api(`/api/viajes/${viaje.id}`, {
@@ -1137,37 +1197,65 @@ function EditarViajeModal({
             </div>
 
             {(() => {
-              const normales = lineas.filter((l) => !l.pendiente_retorno);
-              const marcadas = lineas.filter((l) => l.pendiente_retorno);
+              const excedentes = lineas.filter((l) => {
+                const vpuCount = (l.vpu_count || vpuPorDetalle[l.detalle_id ?? ""]) ?? 0;
+                return vpuCount > 0 && vpuCount > l.cantidad;
+              });
               return (
                 <>
-                  {normales.length > 0 && (
+                  {lineas.length > 0 && (
                     <div className="space-y-1">
                       <p className="text-xs text-slate-400">
-                        {esProgramado ? "Productos del viaje:" : "Productos actuales del viaje (solo lectura):"}
+                        {esProgramado ? "Productos del viaje:" : viaje.lineas.some((l) => ((l.vpu_count ?? 0) > 0) && (l.vpu_count ?? 0) > l.cantidad) ? "Productos del viaje (con exceso — editar para normalizar):" : "Productos actuales del viaje (solo lectura):"}
                       </p>
-                      {normales.map((l) => {
+                      {lineas.map((l) => {
                         const vpuCount = (l.vpu_count || vpuPorDetalle[l.detalle_id ?? ""]) ?? 0;
+                        const exceso = vpuCount > 0 ? Math.max(0, vpuCount - l.cantidad) : 0;
                         return (
-                          <div key={l.key} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm">
+                          <div key={l.key} className={`flex items-center justify-between rounded-lg border px-3 py-2 text-sm ${exceso > 0 ? "border-red-200 bg-red-50" : "border-slate-100 bg-white"}`}>
                             <div className="flex items-center gap-1 flex-wrap">
                               <span className="font-medium">{l.nombre}</span>
                               <span className="ml-1 text-xs text-slate-400">({l.imei})</span>
-                              <span className="ml-2 text-xs text-slate-500">
+                               <span className="ml-2 text-xs text-slate-500">
                                 {l.entalle
                                   ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "—"}`
                                   : l.talla_stock_nombre ?? "Sin talla"}{" "}
                                 · x
                               </span>
-                              {vpuCount > 0 && viaje.estado === "alistado" ? (
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={vpuCount}
-                                  value={l.cantidad}
-                                  onChange={(e) => manejarCambioCantidad(l.key, parseInt(e.target.value) || 0)}
-                                  className="w-14 text-center text-xs border border-blue-200 rounded px-1 py-0.5"
-                                />
+                              {viaje.estado !== "enviado" && viaje.estado !== "terminado" ? (
+                                (() => {
+                                  const tid = l.talla_stock ?? l.talla_vendida;
+                                  const t = (tallasPorProducto[l.producto_id] ?? []).find((x) => x.id === tid);
+                                  const base = t?.cantidad_ventas ?? 0;
+                                  const initKeys = Object.keys(cantInicialRef.current).filter((k) => {
+                                    const ln = lineas.find((x) => x.key === k);
+                                    return ln && ln.producto_id === l.producto_id && (ln.talla_stock ?? ln.talla_vendida) === tid;
+                                  });
+                                  const initTotal = initKeys.reduce((a, k) => a + (cantInicialRef.current[k] ?? 0), 0);
+                                  const maxTotal = base + initTotal;
+                                  const otherCurrent = lineas
+                                    .filter((x) => x.key !== l.key && x.producto_id === l.producto_id && (x.talla_stock ?? x.talla_vendida) === tid)
+                                    .reduce((a, x) => a + x.cantidad, 0);
+                                  const maxPermitido = maxTotal - otherCurrent;
+                                  const minCant = esProgramado ? 1 : 0;
+                                  const puedeBajar = l.cantidad > minCant;
+                                  const puedeSubir = l.cantidad < maxPermitido;
+                                  return (
+                                    <div className="flex items-center gap-0.5 ml-1">
+                                      <button
+                                        disabled={!puedeBajar}
+                                        onClick={() => manejarCambioCantidad(l.key, l.cantidad - 1)}
+                                        className={`w-6 h-6 rounded text-xs font-bold flex items-center justify-center border ${puedeBajar ? "border-slate-300 bg-slate-100 hover:bg-slate-200 text-slate-700" : "border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed"}`}
+                                      >−</button>
+                                      <span className="w-8 text-center text-xs font-semibold">{l.cantidad}</span>
+                                      <button
+                                        disabled={!puedeSubir}
+                                        onClick={() => manejarCambioCantidad(l.key, l.cantidad + 1)}
+                                        className={`w-6 h-6 rounded text-xs font-bold flex items-center justify-center border ${puedeSubir ? "border-blue-300 bg-blue-100 hover:bg-blue-200 text-blue-700" : "border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed"}`}
+                                      >+</button>
+                                    </div>
+                                  );
+                                })()
                               ) : (
                                 <span className="text-xs text-slate-500">{l.cantidad}</span>
                               )}
@@ -1176,10 +1264,15 @@ function EditarViajeModal({
                                   {vpuCount} ali{l.vpu_count !== 1 ? "s" : ""}
                                 </span>
                               )}
+                              {exceso > 0 && (
+                                <span className="ml-1 inline-block rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+                                  exceso: {exceso}
+                                </span>
+                              )}
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-semibold">S/ {(l.cantidad * l.precio).toFixed(2)}</span>
-                              <button onClick={() => quitar(l.key)} className="text-red-400 hover:text-red-600">✕</button>
+                              <button onClick={() => quitar(l.key)} className="text-red-400 hover:text-red-600" title={exceso > 0 ? "Devolver al stock" : "Quitar del viaje"}>✕</button>
                             </div>
                           </div>
                         );
@@ -1187,17 +1280,17 @@ function EditarViajeModal({
                     </div>
                   )}
 
-                  {marcadas.length > 0 && (
+                  {excedentes.length > 0 && (
                     <div className="space-y-1 rounded-lg border-2 border-red-300 bg-red-50 p-3">
                       <p className="text-xs font-semibold uppercase tracking-wide text-red-600">
-                        Productos a devolver al stock
+                        Pendientes de devolver ({excedentes.length} producto{excedentes.length !== 1 ? "s" : ""})
                       </p>
                       <p className="text-[11px] text-red-500">
                         Almacén deberá retirar estos productos y devolverlos al stock.
                       </p>
-                      {marcadas.map((l) => {
+                      {excedentes.map((l) => {
                         const vpuCount = (l.vpu_count || vpuPorDetalle[l.detalle_id ?? ""]) ?? 0;
-                        const exceso = vpuCount;
+                        const unidades = vpuCount - l.cantidad;
                         return (
                           <div key={l.key} className="flex items-center justify-between rounded-lg border border-red-300 bg-white px-3 py-2 text-sm">
                             <div>
@@ -1209,15 +1302,15 @@ function EditarViajeModal({
                                   : l.talla_stock_nombre ?? "Sin talla"}
                               </span>
                               <span className="ml-2 inline-block rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
-                                Quitar {exceso}
+                                Retirar {unidades} u.
                               </span>
                             </div>
                             <button
                               onClick={() => quitar(l.key)}
-                              className="text-red-400 hover:text-red-600"
-                              title="Restaurar a línea normal"
+                              className="text-blue-500 hover:text-blue-700 text-xs font-medium"
+                              title="Restaurar a cantidad completa"
                             >
-                              ✕
+                              Restaurar
                             </button>
                           </div>
                         );
@@ -1473,7 +1566,10 @@ function ViajeCard({
             <p className="text-sm text-slate-400">Sin productos.</p>
           ) : (
             <>
-              {viaje.lineas.filter((l) => !l.pendiente_retorno).map((l) => (
+              {viaje.lineas.filter((l) => {
+                const vpuCount = l.vpu_count ?? 0;
+                return !(vpuCount > 0 && vpuCount > l.cantidad);
+              }).map((l) => (
                 <div
                   key={l.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm"
@@ -1501,33 +1597,43 @@ function ViajeCard({
                   </div>
                 </div>
               ))}
-              {viaje.lineas.some((l) => l.pendiente_retorno) && (
+              {viaje.lineas.filter((l) => {
+                const vpuCount = l.vpu_count ?? 0;
+                return vpuCount > 0 && vpuCount > l.cantidad;
+              }).length > 0 && (
                 <div className="mt-2 rounded-lg border-2 border-red-200 bg-red-50 p-2">
                   <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-red-600">
-                    Pendiente a devolver al stock
+                    Pendientes de devolver
                   </p>
-                  {viaje.lineas.filter((l) => l.pendiente_retorno).map((l) => (
-                    <div
-                      key={l.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium text-red-800">
-                          {l.producto_nombre}{" "}
-                          <span className="text-xs font-normal text-red-400">({l.imei})</span>
-                        </p>
-                        <p className="text-xs text-red-500">
-                          {l.entalle
-                            ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
-                            : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}{" "}
-                          · x{l.vpu_count ?? l.cantidad}
-                          {" · "}
-                          <span className="font-semibold">Almacén debe devolver {(l.vpu_count ?? l.cantidad)} producto(s)</span>
-                        </p>
+                  {viaje.lineas.filter((l) => {
+                    const vpuCount = l.vpu_count ?? 0;
+                    return vpuCount > 0 && vpuCount > l.cantidad;
+                  }).map((l) => {
+                    const vpuCount = l.vpu_count ?? 0;
+                    const exceso = vpuCount - l.cantidad;
+                    return (
+                      <div
+                        key={l.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium text-red-800">
+                            {l.producto_nombre}{" "}
+                            <span className="text-xs font-normal text-red-400">({l.imei})</span>
+                          </p>
+                          <p className="text-xs text-red-500">
+                            {l.entalle
+                              ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                              : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}{" "}
+                            · x{l.cantidad}
+                            {" · "}
+                            <span className="font-semibold">Retirar {exceso} u.</span>
+                          </p>
+                        </div>
+                        <Badge color="red">{exceso} para devolver</Badge>
                       </div>
-                      <Badge color="red">{(l.vpu_count ?? l.cantidad)} para devolver</Badge>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </>

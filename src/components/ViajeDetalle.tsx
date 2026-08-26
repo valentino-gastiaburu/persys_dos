@@ -765,20 +765,25 @@ export default function ViajeDetalle() {
                 for (const u of localUnits) slots.push({ tipo: "local", data: u });
                 while (slots.length < item.cantidad) slots.push({ tipo: "vacio" });
                 const slotsVisibles = slots.slice(0, item.cantidad);
-                const completo = totalListas >= item.cantidad;
-                const rowSpan = slotsVisibles.length;
+                const slotsExceso = slots.slice(item.cantidad);
+                const exceso = slotsExceso.length;
+                const completo = totalListas >= item.cantidad && exceso === 0;
+                const rowSpan = slotsVisibles.length + slotsExceso.length;
 
-                return slotsVisibles.map((slot, idx) => {
+                return [...slotsVisibles, ...slotsExceso].map((slot, idx) => {
                   const isFirst = idx === 0;
+                  const esExceso = idx >= item.cantidad;
                   const bgColor = item.estado === "oculto"
                     ? "bg-slate-50 opacity-60"
-                    : completo
-                      ? "bg-emerald-50"
-                      : slot.tipo === "bd"
-                        ? "bg-blue-50"
-                        : slot.tipo === "local"
-                          ? "bg-amber-50"
-                          : "bg-white";
+                    : esExceso
+                      ? "bg-red-50"
+                      : completo
+                        ? "bg-emerald-50"
+                        : slot.tipo === "bd"
+                          ? "bg-blue-50"
+                          : slot.tipo === "local"
+                            ? "bg-amber-50"
+                            : "bg-white";
 
                   return (
                     <tr key={`${item.detalle_id}-${idx}`} className={`border-b border-slate-200 last:border-b-0 ${bgColor}`}>
@@ -813,7 +818,12 @@ export default function ViajeDetalle() {
                           rowSpan={rowSpan}
                           className="border-r border-b border-slate-200 px-3 py-2 align-middle"
                         >
-                          <span className="font-semibold text-slate-800">{totalListas}/{item.cantidad}</span>
+                          <span className="font-semibold text-slate-800">{item.cantidad}/{item.cantidad}</span>
+                          {exceso > 0 && (
+                            <span className="ml-1 inline-block rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+                              +{exceso} exceso
+                            </span>
+                          )}
                         </td>
                       )}
                       {/* ENTALLAR A — solo primera fila con rowSpan */}
@@ -833,14 +843,19 @@ export default function ViajeDetalle() {
                       <td className="border-r border-slate-200 px-3 py-2.5">
                         {slot.tipo === "bd" ? (
                           <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 font-mono text-xs font-semibold text-emerald-700">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-xs font-semibold ${esExceso ? "bg-red-200 text-red-700" : "bg-emerald-100 text-emerald-700"}`}>
                               {slot.data.productos_unicos?.codigo_qr ?? "—"}
                             </span>
+                            {esExceso && (
+                              <span className="inline-block rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+                                Retirar
+                              </span>
+                            )}
                             {activo && (
                               <button
                                 onClick={() => marcarEliminado(slot.data.id)}
                                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-red-300 bg-red-50 text-sm font-bold text-red-500 transition-colors hover:bg-red-500 hover:text-white"
-                                title="Quitar"
+                                title={esExceso ? "Retirar del viaje" : "Quitar"}
                               >
                                 ×
                               </button>
@@ -883,7 +898,11 @@ export default function ViajeDetalle() {
                           rowSpan={rowSpan}
                           className="px-3 py-2 align-middle"
                         >
-                          {completo ? (
+                          {exceso > 0 ? (
+                            <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                              excedente
+                            </span>
+                          ) : completo ? (
                             <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
                               completo
                             </span>

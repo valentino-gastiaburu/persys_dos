@@ -105,6 +105,49 @@ export async function syncEstadoPedidoPorViajes(pedidoId: string): Promise<strin
   return "confirmado";
 }
 
+// Verifica si algún viaje del pedido tiene VPUs excedentes (vpu_count > cantidad).
+// Se usa para bloquear cambios de estado del pedido hasta normalizar.
+export async function tienePendientesRetiro(pedidoId: string): Promise<number> {
+  const supabase = getSupabase();
+  const { data: viajes } = await supabase
+    .from("viajes")
+    .select("id")
+    .eq("pedido_id", pedidoId)
+    .in("estado", ["programado", "alistado", "enviado"]);
+  if (!viajes || viajes.length === 0) return 0;
+
+  const viajeIds = viajes.map((v) => v.id);
+  const { data: vpuRows } = await supabase
+    .from("viaje_producto_unicos")
+    .select("detalle_pedido_id")
+    .in("viaje_id", viajeIds);
+
+  const detalleIds = [...new Set((vpuRows ?? []).map((v) => v.detalle_pedido_id).filter(Boolean))] as string[];
+  if (detalleIds.length === 0) return 0;
+
+  const { data: detalles } = await supabase
+    .from("detalles_pedido")
+    .select("id, viaje_id, cantidad")
+    .in("id", detalleIds)
+    .not("estado", "eq", "oculto");
+
+  // Contar VPUs por detalle
+  const vpPorDetalle: Record<string, number> = {};
+  for (const vpu of vpuRows ?? []) {
+    const key = vpu.detalle_pedido_id;
+    if (key) vpPorDetalle[key] = (vpPorDetalle[key] ?? 0) + 1;
+  }
+
+  let totalExceso = 0;
+  for (const det of detalles ?? []) {
+    if (!det.viaje_id) continue;
+    const totalVpu = vpPorDetalle[det.id] ?? 0;
+    const exceso = totalVpu - Number(det.cantidad);
+    if (exceso > 0) totalExceso += exceso;
+  }
+  return totalExceso;
+}
+
 // Total del pedido = Σ totales de viajes de entrega − Σ totales de viajes de
 // regreso (devoluciones). El costo de envío de un regreso es informativo y no
 // se descuenta.
@@ -401,8 +444,12 @@ export async function recalcularEstadoViaje(viajeId: string): Promise<void> {
     }
   }
 
-  if (todasCubiertas && (detalles?.length ?? 0) > 0 && viaje.estado === "programado") {
-    await supabase.from("viajes").update({ estado: "alistado" }).eq("id", viajeId);
+  if ((detalles?.length ?? 0) > 0) {
+    if (todasCubiertas && viaje.estado === "programado") {
+      await supabase.from("viajes").update({ estado: "alistado" }).eq("id", viajeId);
+    } else if (!todasCubiertas && viaje.estado === "alistado") {
+      await supabase.from("viajes").update({ estado: "programado" }).eq("id", viajeId);
+    }
   }
 
   // Sincronizar estado del pedido
