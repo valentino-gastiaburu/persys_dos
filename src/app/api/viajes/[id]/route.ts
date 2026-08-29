@@ -451,7 +451,7 @@ export async function PATCH(
         cantidad: Number(l.cantidad),
         precio_unitario: Number(l.precio_unitario ?? 0),
         subtotal: Number(l.cantidad) * Number(l.precio_unitario ?? 0),
-        genero: ["dama", "caballero"].includes(l.genero) ? l.genero : "dama",
+        genero: (l.genero === "dama" || l.genero === "caballero") ? l.genero : "dama",
         es_extra_motorizado: Boolean(l.es_extra_motorizado),
       }));
 

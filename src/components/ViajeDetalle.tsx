@@ -106,6 +106,7 @@ export default function ViajeDetalle() {
   const [busquedaTexto, setBusquedaTexto] = useState("");
   const [busquedaData, setBusquedaData] = useState<StockDisponible[]>([]);
   const [buscandoStock, setBuscandoStock] = useState(false);
+  const [retornandoQr, setRetornandoQr] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     const { data, error } = await api<{
@@ -587,6 +588,40 @@ export default function ViajeDetalle() {
 
   // ─── FLUJO ENTREGA ──────────────────────────────────────────────────────
 
+  // Para viajes cancelados: VPUs pendientes de retorno al stock (los que
+  // cuentan en "Pendientes a regresar"): no devueltos y no pendientes.
+  const esCancelado = viaje.estado === "cancelado";
+  const pendientesRetorno = esCancelado
+    ? alistados.filter((a) => a.estado !== "devuelto" && a.estado !== "pendiente")
+    : [];
+
+  // Devolver un VPU concreto al stock (se pasa su codigo_qr al endpoint)
+  async function devolverAlStock(a: Alistado) {
+    const qr = a.productos_unicos?.codigo_qr;
+    if (!qr) return;
+    if (!window.confirm(`¿Devolver ${a.productos_unicos?.productos?.imei ?? qr} al stock?`)) return;
+    setRetornandoQr(qr);
+    setMsg(null);
+    const { data, error } = await api<{
+      ok: boolean;
+      pendientes_restantes: number;
+      error?: string;
+    }>(`/api/viajes/${id}/retorno-stock`, {
+      method: "POST",
+      body: JSON.stringify({ codigo_qr: qr }),
+    });
+    setRetornandoQr(null);
+    if (error) {
+      setMsg({ tipo: "err", texto: error });
+      return;
+    }
+    setMsg({
+      tipo: "ok",
+      texto: `Producto devuelto al stock. Quedan ${data?.pendientes_restantes ?? 0} pendiente(s).`,
+    });
+    cargar();
+  }
+
   // Agrupar unidades alistadas por detalle
   const unidadesPorDetalle = new Map<string, { bd: Alistado[]; local: Pendiente[] }>();
   for (const item of items) {
@@ -736,6 +771,67 @@ export default function ViajeDetalle() {
           </div>
         </div>
       )}
+      {/* Viaje cancelado con productos pendientes de devolver al stock */}
+      {esCancelado && (
+        <section className="mb-4 overflow-hidden rounded-xl border border-amber-300 bg-amber-50">
+          <div className="border-b border-amber-200 bg-amber-100/60 px-5 py-3">
+            <h2 className="text-sm font-semibold text-amber-800">
+              Pendientes a regresar al stock ({pendientesRetorno.length})
+            </h2>
+          </div>
+          {pendientesRetorno.length === 0 ? (
+            <p className="px-5 py-4 text-sm text-slate-500">
+              No hay productos pendientes de retorno en este viaje.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-amber-200 bg-amber-100/40 text-left text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    <th className="px-4 py-2">IMEI</th>
+                    <th className="px-4 py-2">TALLA</th>
+                    <th className="px-4 py-2">CODIGO QR</th>
+                    <th className="px-4 py-2">ESTADO</th>
+                    <th className="px-4 py-2 text-right">ACCIÓN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendientesRetorno.map((a) => {
+                    const qr = a.productos_unicos?.codigo_qr ?? "";
+                    return (
+                      <tr key={a.id} className="border-b border-amber-100 last:border-0 bg-white">
+                        <td className="px-4 py-2 font-mono text-xs text-slate-500">
+                          {a.productos_unicos?.productos?.imei ?? "—"}
+                        </td>
+                        <td className="px-4 py-2 font-medium text-slate-800">
+                          {a.productos_unicos?.tallas?.nombre ?? "—"}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-xs text-slate-500">{qr}</td>
+                        <td className="px-4 py-2">
+                          <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                            {a.estado}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <Button
+                            size="sm"
+                            variant="success"
+                            disabled={retornandoQr === qr}
+                            onClick={() => devolverAlStock(a)}
+                          >
+                            {retornandoQr === qr ? "Devolviendo..." : "Devolver"}
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="mb-4 overflow-hidden rounded-xl border border-slate-300 bg-white">
         <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
           <h2 className="text-sm font-semibold text-slate-700">
