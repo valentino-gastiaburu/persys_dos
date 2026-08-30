@@ -113,7 +113,7 @@ export async function tienePendientesRetiro(pedidoId: string): Promise<number> {
     .from("viajes")
     .select("id")
     .eq("pedido_id", pedidoId)
-    .in("estado", ["programado", "alistado", "enviado"]);
+    .in("estado", ["programado", "alistado"]);
   if (!viajes || viajes.length === 0) return 0;
 
   const viajeIds = viajes.map((v) => v.id);

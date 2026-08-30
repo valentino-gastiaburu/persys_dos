@@ -381,7 +381,7 @@ export async function GET(request: NextRequest) {
         for (const det of detalles ?? []) {
           if (!det.viaje_id) continue;
           const info = viajeInfo[det.viaje_id];
-          if (!info || info.estado === "terminado" || info.estado === "cancelado") continue;
+          if (!info || info.estado === "terminado" || info.estado === "cancelado" || info.estado === "enviado") continue;
           const key = `${det.viaje_id}|${det.id}`;
           const totalVpu = vpPorDetalle[key] ?? 0;
           const exceso = totalVpu - Number(det.cantidad);

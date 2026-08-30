@@ -198,7 +198,7 @@ export default function PedidoDetallePage() {
 
   const deuda = Number(pedido.monto_total) - totalPagado;
   const totalPendienteRetiro = viajes
-    .filter((v) => v.estado !== "cancelado" && v.estado !== "terminado")
+    .filter((v) => v.estado !== "cancelado" && v.estado !== "terminado" && v.estado !== "enviado")
     .flatMap((v) => v.lineas)
     .reduce((sum, l) => {
       const vpuCount = l.vpu_count ?? 0;
@@ -1578,6 +1578,8 @@ function ViajeCard({
             <>
               {viaje.lineas.filter((l) => {
                 const vpuCount = l.vpu_count ?? 0;
+                const esEntregaEnviado = viaje.tipo === "entrega" && (viaje.estado === "enviado" || viaje.estado === "terminado");
+                if (esEntregaEnviado) return true;
                 return !(vpuCount > 0 && vpuCount > l.cantidad);
               }).map((l) => (
                 <div
@@ -1608,6 +1610,8 @@ function ViajeCard({
                 </div>
               ))}
               {viaje.lineas.filter((l) => {
+                const esEntregaEnviado = viaje.tipo === "entrega" && (viaje.estado === "enviado" || viaje.estado === "terminado");
+                if (esEntregaEnviado) return false;
                 const vpuCount = l.vpu_count ?? 0;
                 return vpuCount > 0 && vpuCount > l.cantidad;
               }).length > 0 && (
