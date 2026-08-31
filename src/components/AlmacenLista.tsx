@@ -57,14 +57,20 @@ function ViajeRow({
   onClick: () => void;
 }) {
   const esCancelado = v.estado === "cancelado";
+  const esHistorial = v.estado === "enviado" || v.estado === "terminado";
+  const filaClase = esCancelado
+    ? "bg-slate-50 opacity-60"
+    : esHistorial
+      ? "bg-slate-100 opacity-80"
+      : esHoy
+        ? "bg-blue-50"
+        : "";
   return (
     <tr
       onClick={onClick}
-      className={`cursor-pointer border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50 ${
-        esCancelado ? "bg-slate-50 opacity-60" : esHoy ? "bg-blue-50" : ""
-      }`}
+      className={`cursor-pointer border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50 ${filaClase}`}
     >
-      <td className={`px-4 py-2 font-semibold text-blue-700 ${esCancelado ? "text-slate-400 line-through" : ""}`}>
+      <td className={`px-4 py-2 font-semibold ${esCancelado ? "text-slate-400 line-through" : esHistorial ? "text-slate-600" : "text-blue-700"}`}>
         {v.codigo}
         {esHoy && (
           <span className="ml-2 inline-block rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
@@ -74,6 +80,11 @@ function ViajeRow({
         {esCancelado && (
           <span className="ml-2 inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600">
             Cancelado
+          </span>
+        )}
+        {esHistorial && (
+          <span className="ml-2 inline-block rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-500">
+            {v.estado === "enviado" ? "Enviado" : "Entregado"}
           </span>
         )}
       </td>

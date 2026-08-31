@@ -78,7 +78,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const costoEnvio = Number(body.costo_envio ?? 0);
+    const costoEnvio =
+      body.costo_envio !== undefined
+        ? Number(body.costo_envio)
+        : Number((pedido as any).costo_envio ?? 0);
     const direccion = body.direccion || pedido.direccion_entrega || null;
     const viajeCodigo = await generarCodigoViaje();
     const { data: viaje, error: viajeErr } = await supabase
@@ -351,28 +354,34 @@ export async function GET(request: NextRequest) {
     alistadosPorViaje = {};
     pendientesRetornoPorViaje = {};
 
-    // Agrupar VPUs por viaje+detalle para detectar excedentes
+    // Agrupar VPUs no devueltos por viaje+detalle para detectar excedentes.
+    // Los VPU devueltos NO cuentan: si un exceso ya se regresó al stock, el
+    // aviso de "Pendiente a devolver" debe desaparecer.
+    const vpuNoDevueltos = (vpuRows ?? []).filter((v) => v.estado !== "devuelto");
     const vpPorDetalle: Record<string, number> = {};
     for (const vpu of vpuRows ?? []) {
       alistadosPorViaje[vpu.viaje_id] = (alistadosPorViaje[vpu.viaje_id] ?? 0) + 1;
+    }
+    for (const vpu of vpuNoDevueltos) {
       const key = `${vpu.viaje_id}|${vpu.detalle_pedido_id}`;
       vpPorDetalle[key] = (vpPorDetalle[key] ?? 0) + 1;
     }
 
     // 1) Cancelados / recojo activo (flujo original)
-    for (const vpu of vpuRows ?? []) {
+    for (const vpu of vpuNoDevueltos) {
       const info = viajeInfo[vpu.viaje_id];
       if (!info) continue;
       const esCancelado = info.estado === "cancelado";
       const esRecojoActivo = info.tipo === "recojo" && info.estado !== "terminado";
-      if ((esCancelado || esRecojoActivo) && vpu.estado !== "devuelto" && vpu.estado !== "pendiente") {
+      if ((esCancelado || esRecojoActivo) && vpu.estado !== "pendiente") {
         pendientesRetornoPorViaje[vpu.viaje_id] = (pendientesRetornoPorViaje[vpu.viaje_id] ?? 0) + 1;
       }
     }
 
-    // 2) VPUs excedentes en viajes activos (cantidad del detalle < VPUs alistados)
+    // 2) VPUs excedentes en viajes de entrega activos (cantidad del detalle < VPUs no devueltos).
+    //    Se excluyen recojo (ya cubierto en 1) y estados enviado/terminado/cancelado.
     if (ids.length > 0) {
-      const detalleIds = [...new Set((vpuRows ?? []).map((v) => v.detalle_pedido_id).filter(Boolean))];
+      const detalleIds = [...new Set(vpuNoDevueltos.map((v) => v.detalle_pedido_id).filter(Boolean))];
       if (detalleIds.length > 0) {
         const { data: detalles } = await supabase
           .from("detalles_pedido")
@@ -381,7 +390,7 @@ export async function GET(request: NextRequest) {
         for (const det of detalles ?? []) {
           if (!det.viaje_id) continue;
           const info = viajeInfo[det.viaje_id];
-          if (!info || info.estado === "terminado" || info.estado === "cancelado" || info.estado === "enviado") continue;
+          if (!info || info.tipo === "recojo" || info.estado === "terminado" || info.estado === "cancelado" || info.estado === "enviado") continue;
           const key = `${det.viaje_id}|${det.id}`;
           const totalVpu = vpPorDetalle[key] ?? 0;
           const exceso = totalVpu - Number(det.cantidad);

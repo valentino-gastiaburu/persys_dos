@@ -254,6 +254,28 @@ export default function PedidoDetallePage() {
     )
     .filter((l) => l.estado !== "oculto");
 
+  // Separar las líneas del pedido final de las correcciones y devoluciones.
+  // - lineasDevolver: devolución (recojo) aún pendiente de completar. Las ya
+  //   devueltas (historial) no se muestran aquí; se ven en las tarjetas de viaje.
+  // - lineasCorregir: cosas que quedaron físicamente en un viaje pero NO son
+  //   del pedido del cliente (residuo de una edición) y deben regresar al stock.
+  // - lineasPedido: lo que el cliente pidió al final (viajes de entrega normales).
+  const lineasDevolver = lineasFinales.filter(
+    (l) => l.devolucion && l.estado === "pendiente_devolucion"
+  );
+  const lineasCorregir = lineasFinales.filter(
+    (l) => l.pendiente_retorno || (l.es_extra_motorizado && !l.devolucion)
+  );
+  const corregirIds = new Set(lineasCorregir.map((l) => l.id));
+  const devolverIds = new Set(lineasDevolver.map((l) => l.id));
+  const lineasPedido = lineasFinales.filter(
+    (l) => !corregirIds.has(l.id) && !devolverIds.has(l.id)
+  );
+
+  const subtotalDevolver = lineasDevolver.reduce((s, l) => s + Number(l.subtotal ?? 0), 0);
+  const subtotalCorregir = lineasCorregir.reduce((s, l) => s + Number(l.subtotal ?? 0), 0);
+  const subtotalPedido = lineasPedido.reduce((s, l) => s + Number(l.subtotal ?? 0), 0);
+
   async function confirmar() {
     setConfirmando(true);
     setError(null);
@@ -388,65 +410,194 @@ export default function PedidoDetallePage() {
               ) : lineasFinales.length === 0 ? (
                 <p className="text-sm text-slate-400">Sin productos.</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse border border-slate-300 text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-300 bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
-                        <th className="border-r border-slate-200 px-3 py-2 font-bold">IMEI</th>
-                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Producto</th>
-                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Talla</th>
-                        <th className="border-r border-slate-200 px-3 py-2 text-right font-bold">Cantidad</th>
-                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Estado</th>
-                        <th className="border-r border-slate-200 px-3 py-2 font-bold">Viaje</th>
-                        <th className="px-3 py-2 text-right font-bold">Costo total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {lineasFinales.map((l) => {
-                        const vpuCount = l.vpu_count ?? 0;
-                        const tieneExceso = vpuCount > 0 && vpuCount > l.cantidad;
-                        return (
-                        <tr key={l.id} className={tieneExceso ? "bg-red-50" : ""}>
-                          <td className="border-r border-slate-200 px-3 py-2 font-mono text-xs text-slate-500">{l.imei}</td>
-                          <td className="border-r border-slate-200 px-3 py-2 font-medium text-slate-800">
-                            {l.producto_nombre}
-                            {l.es_extra_motorizado ? " · +motorizado" : ""}
+                <div className="space-y-4">
+                  {/* Lo que pidió el cliente */}
+                  {lineasPedido.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Productos del pedido
+                    </p>
+                    <table className="w-full border-collapse border border-slate-300 text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-300 bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
+                          <th className="border-r border-slate-200 px-3 py-2 font-bold">IMEI</th>
+                          <th className="border-r border-slate-200 px-3 py-2 font-bold">Producto</th>
+                          <th className="border-r border-slate-200 px-3 py-2 font-bold">Talla</th>
+                          <th className="border-r border-slate-200 px-3 py-2 text-right font-bold">Cantidad</th>
+                          <th className="border-r border-slate-200 px-3 py-2 font-bold">Estado</th>
+                          <th className="px-3 py-2 text-right font-bold">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {lineasPedido.map((l) => {
+                          const vpuCount = l.vpu_count ?? 0;
+                          const exceso = Math.max(0, vpuCount - l.cantidad);
+                          return (
+                            <tr key={l.id}>
+                              <td className="border-r border-slate-200 px-3 py-2 font-mono text-xs text-slate-500">{l.imei}</td>
+                              <td className="border-r border-slate-200 px-3 py-2 font-medium text-slate-800">
+                                {l.producto_nombre}
+                                {l.es_extra_motorizado ? " · +motorizado" : ""}
+                                {exceso > 0 && (
+                                  <span className="ml-2 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">
+                                    Retirar {exceso} u. al stock
+                                  </span>
+                                )}
+                              </td>
+                              <td className="border-r border-slate-200 px-3 py-2 text-slate-600">
+                                {l.entalle
+                                  ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                                  : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}
+                              </td>
+                              <td className="border-r border-slate-200 px-3 py-2 text-right">
+                                <span className="text-slate-600">{l.cantidad}</span>
+                                <span className="ml-1 text-xs text-slate-400">x S/ {Number(l.precio_unitario).toFixed(2)}</span>
+                              </td>
+                              <td className="border-r border-slate-200 px-3 py-2">
+                                {l.viaje_estado === "terminado" ? (
+                                  <Badge color="green">Entregado</Badge>
+                                ) : l.viaje_estado === "enviado" ? (
+                                  <Badge color="amber">Enviado</Badge>
+                                ) : l.viaje_estado === "alistado" ? (
+                                  <Badge color="blue">Alistado</Badge>
+                                ) : (
+                                  <Badge color="slate">Por alistar</Badge>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-800">
+                                S/ {Number(l.subtotal).toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-slate-300 bg-slate-50">
+                          <td colSpan={5} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-slate-500">
+                            Subtotal del pedido
                           </td>
-                          <td className="border-r border-slate-200 px-3 py-2 text-slate-600">
-                            {l.entalle
-                              ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
-                              : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}
-                          </td>
-                          <td className="border-r border-slate-200 px-3 py-2 text-right">
-                            <span className="text-slate-600">{l.cantidad}</span>
-                            <span className="ml-1 text-xs text-slate-400">x S/ {Number(l.precio_unitario).toFixed(2)}</span>
-                          </td>
-                          <td className="border-r border-slate-200 px-3 py-2">
-                            {l.estado === "devuelto" ? (
-                              <Badge color="green">Devuelto</Badge>
-                            ) : l.estado === "pendiente_devolucion" ? (
-                              <Badge color="red">Pendiente de devolución</Badge>
-                            ) : tieneExceso ? (
-                              <Badge color="red">Pendiente a devolver a stock</Badge>
-                            ) : l.viaje_estado === "alistado" ? (
-                              <Badge color="blue">Alistado</Badge>
-                            ) : l.viaje_estado === "enviado" ? (
-                              <Badge color="amber">Enviado</Badge>
-                            ) : (
-                              <Badge color="slate">Por alistar</Badge>
-                            )}
-                          </td>
-                          <td className="border-r border-slate-200 px-3 py-2 text-xs text-slate-500">
-                            {l.viaje_codigo} · {l.viaje_tipo}
-                          </td>
-                          <td className="px-3 py-2 text-right font-semibold text-slate-800">
-                            S/ {Number(l.subtotal).toFixed(2)}
+                          <td className="px-3 py-2 text-right font-bold text-slate-800">
+                            S/ {subtotalPedido.toFixed(2)}
                           </td>
                         </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                      </tfoot>
+                    </table>
+                  </div>
+                  )}
+
+                  {/* Por corregir: regresar al stock */}
+                  {lineasCorregir.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-600">
+                        Por corregir · regresar al stock
+                      </p>
+                      <table className="w-full border-collapse border border-amber-300 text-sm">
+                        <thead>
+                          <tr className="border-b border-amber-300 bg-amber-50 text-left text-xs uppercase tracking-wide text-amber-700">
+                            <th className="border-r border-amber-200 px-3 py-2 font-bold">IMEI</th>
+                            <th className="border-r border-amber-200 px-3 py-2 font-bold">Producto</th>
+                            <th className="border-r border-amber-200 px-3 py-2 font-bold">Talla</th>
+                            <th className="border-r border-amber-200 px-3 py-2 text-right font-bold">Cantidad</th>
+                            <th className="border-r border-amber-200 px-3 py-2 font-bold">Viaje</th>
+                            <th className="px-3 py-2 text-right font-bold">Subtotal</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-amber-100">
+                          {lineasCorregir.map((l) => (
+                            <tr key={l.id}>
+                              <td className="border-r border-amber-200 px-3 py-2 font-mono text-xs text-slate-500">{l.imei}</td>
+                              <td className="border-r border-amber-200 px-3 py-2 font-medium text-slate-800">
+                                {l.producto_nombre}
+                                {l.es_extra_motorizado ? " · +motorizado" : ""}
+                              </td>
+                              <td className="border-r border-amber-200 px-3 py-2 text-slate-600">
+                                {l.entalle
+                                  ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                                  : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}
+                              </td>
+                              <td className="border-r border-amber-200 px-3 py-2 text-right">
+                                <span className="text-slate-600">{l.cantidad}</span>
+                                <span className="ml-1 text-xs text-slate-400">x S/ {Number(l.precio_unitario).toFixed(2)}</span>
+                              </td>
+                              <td className="border-r border-amber-200 px-3 py-2 text-xs text-slate-500">
+                                {l.viaje_codigo} · {l.viaje_tipo}
+                              </td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-800">
+                                S/ {Number(l.subtotal).toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t border-amber-300 bg-amber-50">
+                            <td colSpan={5} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-amber-600">
+                              Subtotal a regresar al stock
+                            </td>
+                            <td className="px-3 py-2 text-right font-bold text-slate-800">
+                              S/ {subtotalCorregir.toFixed(2)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Por devolver */}
+                  {lineasDevolver.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-600">
+                        Por devolver
+                      </p>
+                      <table className="w-full border-collapse border border-red-300 text-sm">
+                        <thead>
+                          <tr className="border-b border-red-300 bg-red-50 text-left text-xs uppercase tracking-wide text-red-700">
+                            <th className="border-r border-red-200 px-3 py-2 font-bold">IMEI</th>
+                            <th className="border-r border-red-200 px-3 py-2 font-bold">Producto</th>
+                            <th className="border-r border-red-200 px-3 py-2 font-bold">Talla</th>
+                            <th className="border-r border-red-200 px-3 py-2 text-right font-bold">Cantidad</th>
+                            <th className="border-r border-red-200 px-3 py-2 font-bold">Viaje</th>
+                            <th className="px-3 py-2 text-right font-bold">Subtotal</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-red-100">
+                          {lineasDevolver.map((l) => (
+                            <tr key={l.id}>
+                              <td className="border-r border-red-200 px-3 py-2 font-mono text-xs text-slate-500">{l.imei}</td>
+                              <td className="border-r border-red-200 px-3 py-2 font-medium text-slate-800">
+                                {l.producto_nombre}
+                                {l.es_extra_motorizado ? " · +motorizado" : ""}
+                              </td>
+                              <td className="border-r border-red-200 px-3 py-2 text-slate-600">
+                                {l.entalle
+                                  ? `${l.talla_stock_nombre ?? "—"} → ${l.talla_vendida_nombre ?? "Sin talla"}`
+                                  : l.talla_vendida_nombre ?? l.talla_stock_nombre ?? "Sin talla"}
+                              </td>
+                              <td className="border-r border-red-200 px-3 py-2 text-right">
+                                <span className="text-slate-600">{l.cantidad}</span>
+                                <span className="ml-1 text-xs text-slate-400">x S/ {Number(l.precio_unitario).toFixed(2)}</span>
+                              </td>
+                              <td className="border-r border-red-200 px-3 py-2 text-xs text-slate-500">
+                                {l.viaje_codigo} · {l.viaje_tipo}
+                              </td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-800">
+                                S/ {Number(l.subtotal).toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t border-red-300 bg-red-50">
+                            <td colSpan={5} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-red-600">
+                              Subtotal por devolver
+                            </td>
+                            <td className="px-3 py-2 text-right font-bold text-slate-800">
+                              S/ {subtotalDevolver.toFixed(2)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="mt-4 flex justify-between border-t border-slate-300 pt-3 text-sm">

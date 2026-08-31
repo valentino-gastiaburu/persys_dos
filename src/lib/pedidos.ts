@@ -90,9 +90,15 @@ export async function syncEstadoPedidoPorViajes(pedidoId: string): Promise<strin
 
   if (!viajes || viajes.length === 0) return "confirmado";
 
-  const recojoPendiente = viajes.find((v) => v.tipo === "recojo" && v.estado !== "terminado" && v.estado !== "cancelado");
-  if (recojoPendiente) {
-    return recojoPendiente.motivo_recojo === "cambio" ? "esperando_cambio" : "esperando_devolucion";
+  // Si hay algún recojo pendiente (no terminado/cancelado), el pedido queda
+  // en espera de devolución o cambio. Se prioriza "cambio" si existe al menos
+  // un recojo de cambio pendiente; caso contrario, esperando_devolucion.
+  const recojosPendientes = viajes.filter(
+    (v) => v.tipo === "recojo" && v.estado !== "terminado" && v.estado !== "cancelado"
+  );
+  if (recojosPendientes.length > 0) {
+    const hayCambio = recojosPendientes.some((v) => v.motivo_recojo === "cambio");
+    return hayCambio ? "esperando_cambio" : "esperando_devolucion";
   }
 
   const entregas = viajes.filter((v) => v.tipo === "entrega" && v.estado !== "cancelado");

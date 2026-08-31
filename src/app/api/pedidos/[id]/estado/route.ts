@@ -66,7 +66,9 @@ export async function POST(
 
     const viajeIds = viajesACancelar.map((v) => v.id);
 
-    // Devolver VPU al stock
+    // Devolver VPU al stock y marcar los VPU como devueltos.
+    // Marcarlos como devueltos evita que queden colgando como "pendiente de
+    // regresar al stock" (residuo), ya que el producto físico ya volvió.
     if (viajeIds.length > 0) {
       const { data: vpus } = await supabase
         .from("viaje_producto_unicos")
@@ -80,6 +82,10 @@ export async function POST(
             .update({ estado: "en_almacen", fecha_salida: null })
             .eq("id", vpu.producto_unico_id);
         }
+        await supabase
+          .from("viaje_producto_unicos")
+          .update({ estado: "devuelto" })
+          .in("viaje_id", viajeIds);
       }
     }
 

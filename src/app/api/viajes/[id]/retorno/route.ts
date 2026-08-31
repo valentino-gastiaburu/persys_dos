@@ -1,7 +1,19 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { recalcularEstadoViaje } from "@/lib/pedidos";
+import { syncEstadoPedidoPorViajes } from "@/lib/pedidos";
+
+// Marca el viaje de recojo como terminado (devolución completa) y sincroniza
+// el estado del pedido según las entregas restantes.
+async function finalizarRecojo(
+  supabase: ReturnType<typeof getSupabase>,
+  viaje: { id: string; pedido_id: string | null }
+) {
+  await supabase.from("viajes").update({ estado: "terminado" }).eq("id", viaje.id);
+  if (viaje.pedido_id) {
+    await syncEstadoPedidoPorViajes(viaje.pedido_id);
+  }
+}
 
 // POST /api/viajes/[id]/retorno
 // Escaneo de productos en viaje de recojo: valida contra la lista pre-populada
@@ -55,13 +67,15 @@ export async function POST(
     .maybeSingle();
 
   if (!vpu) {
-    // El ID exacto no está pendiente. Si hay otros pendientes para el mismo
-    // detalle (cantidad > 1), aceptar y emparejar con cualquiera disponible.
-    // Esto cubre el caso donde no sabés cuáles IDs específicos le diste al motorizado.
+    // El ID exacto no está pendiente. Si hay otro VPU pendiente para ESTE
+    // mismo producto (mismo producto_unico_id), aceptar y emparejar.
+    // Se valida el producto escaneado para no registrar la devolución de un
+    // producto distinto al físico que llegó.
     const { data: otrosPendientes } = await supabase
       .from("viaje_producto_unicos")
       .select("id, detalle_pedido_id")
       .eq("viaje_id", id)
+      .eq("producto_unico_id", unico.id)
       .eq("estado", "pendiente")
       .limit(1);
 
@@ -105,11 +119,14 @@ export async function POST(
         .eq("viaje_id", id)
         .eq("estado", "pendiente");
 
+      const completado = (pendientesRestantes ?? 0) === 0;
+      if (completado) await finalizarRecojo(supabase, viaje);
+
       return Response.json({
         ok: true,
         producto_devuelto: { id: unico.id, producto_id: unico.producto_id, codigo_qr: codigoQr },
         pendientes_restantes: pendientesRestantes ?? 0,
-        completado: (pendientesRestantes ?? 0) === 0,
+        completado,
       }, { status: 200 });
     }
 
@@ -158,6 +175,8 @@ export async function POST(
     .eq("estado", "pendiente");
 
   const completado = (pendientesRestantes ?? 0) === 0;
+
+  if (completado) await finalizarRecojo(supabase, viaje);
 
   return Response.json({
     ok: true,

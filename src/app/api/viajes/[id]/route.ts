@@ -419,6 +419,9 @@ export async function PATCH(
 
   // ── Modificar productos ──
   if (body.lineas !== undefined) {
+    if (!esActivo) {
+      return Response.json({ error: "Solo se pueden editar viajes programados o alistados" }, { status: 400 });
+    }
     const lineas: {
       detalle_id?: string;
       producto_id: string;
@@ -470,7 +473,7 @@ export async function PATCH(
       // Obtener detalles existentes en el viaje
       const { data: existentes } = await supabase
         .from("detalles_pedido")
-        .select("id, producto_id, talla_stock, talla_vendida, cantidad")
+        .select("id, producto_id, talla_stock, talla_vendida, cantidad, precio_unitario")
         .eq("viaje_id", id)
         .not("estado", "eq", "oculto");
       const existentesList = existentes ?? [];
@@ -510,7 +513,7 @@ export async function PATCH(
               })
               .eq("id", o.id);
             // Añadir a existentesList para que no se dupliquen
-            existentesList.push({ id: o.id, producto_id: o.producto_id, talla_stock: o.talla_stock, talla_vendida: o.talla_vendida, cantidad: Number(linea.cantidad) });
+            existentesList.push({ id: o.id, producto_id: o.producto_id, talla_stock: o.talla_stock, talla_vendida: o.talla_vendida, cantidad: Number(linea.cantidad), precio_unitario: Number(linea.precio_unitario ?? 0) });
           }
         }
       }
@@ -523,10 +526,13 @@ export async function PATCH(
             && (e.talla_vendida || "") === (linea.talla_vendida || "")
         );
         if (existente && Number(existente.cantidad) !== Number(linea.cantidad)) {
+          const nuevaCant = Number(linea.cantidad);
+          const precio = Number(linea.precio_unitario ?? existente.precio_unitario ?? 0);
           await supabase
             .from("detalles_pedido")
-            .update({ cantidad: Number(linea.cantidad) })
+            .update({ cantidad: nuevaCant, subtotal: nuevaCant * precio })
             .eq("id", existente.id);
+          existente.cantidad = nuevaCant;
         }
       }
 
@@ -650,7 +656,7 @@ export async function PATCH(
 
   // ── Modificar productos de recojo (agregar/quitar detalles) ──
   if (body.recojo_lineas !== undefined && viaje.tipo === "recojo") {
-    if (viaje.estado === "alistado" || viaje.estado === "enviado" || viaje.estado === "terminado") {
+    if (viaje.estado !== "programado") {
       return Response.json({ error: "No se pueden modificar productos en este estado" }, { status: 400 });
     }
 

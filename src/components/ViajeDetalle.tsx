@@ -440,7 +440,7 @@ export default function ViajeDetalle() {
         );
       } catch {
         setScannerActivo(false);
-        setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos." });
+        setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos del navegador o usa el botón 'Recoger' de cada producto para registrarlo manualmente." });
       }
     }
 
@@ -516,11 +516,13 @@ export default function ViajeDetalle() {
                   <th className="px-4 py-2">TALLA</th>
                   <th className="px-4 py-2">ESTADO</th>
                   <th className="px-4 py-2">ID</th>
+                  <th className="px-4 py-2 text-right">ACCIÓN</th>
                 </tr>
               </thead>
               <tbody>
                 {alistados.map((a) => {
                   const esDevuelto = a.estado === "devuelto";
+                  const qr = a.productos_unicos?.codigo_qr ?? "";
                   return (
                     <tr
                       key={a.id}
@@ -545,15 +547,22 @@ export default function ViajeDetalle() {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs text-slate-500">
-                        {a.productos_unicos?.codigo_qr ?? "—"}
+                      <td className="px-4 py-2 font-mono text-xs text-slate-500">{qr}</td>
+                      <td className="px-4 py-2 text-right">
+                        {!esDevuelto && recojoActivo ? (
+                          <Button size="sm" variant="success" onClick={() => escanearRetorno(qr)}>
+                            Recoger
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-emerald-600">✓ devuelto</span>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
                 {alistados.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-4 py-4 text-center text-sm text-slate-400">
+                    <td colSpan={5} className="px-4 py-4 text-center text-sm text-slate-400">
                       No hay productos registrados para este recojo.
                     </td>
                   </tr>
@@ -563,24 +572,20 @@ export default function ViajeDetalle() {
           </div>
         </section>
 
-        {/* Acciones */}
-        {activo && (
-          <div className="flex flex-wrap gap-2">
-            {viaje.estado === "programado" && (
-              <Button onClick={() => cambiarEstado("alistado")} disabled={!todosDevueltos}>
-                Marcar como alistado
-              </Button>
-            )}
-            {viaje.estado === "alistado" && (
-              <Button onClick={() => cambiarEstado("enviado")}>Enviar viaje</Button>
-            )}
-            {viaje.estado === "enviado" && (
-              <Button variant="success" onClick={() => cambiarEstado("terminado")}>
-                Registrar devolución
-              </Button>
-            )}
-          </div>
-        )}
+        {/* Estado del recojo */}
+        <div className="flex flex-wrap gap-2">
+          {todosDevueltos ? (
+            <span className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Devolución completa
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
+              <span className="h-2 w-2 rounded-full bg-amber-500" />
+              Pendiente de recoger {totalEsperados - totalDevueltos} producto(s)
+            </span>
+          )}
+        </div>
       </div>
     );
   }
@@ -591,6 +596,7 @@ export default function ViajeDetalle() {
   // Para viajes cancelados: VPUs pendientes de retorno al stock (los que
   // cuentan en "Pendientes a regresar"): no devueltos y no pendientes.
   const esCancelado = viaje.estado === "cancelado";
+  const esHistorial = ["enviado", "terminado", "cancelado"].includes(viaje.estado);
   const pendientesRetorno = esCancelado
     ? alistados.filter((a) => a.estado !== "devuelto" && a.estado !== "pendiente")
     : [];
@@ -637,7 +643,7 @@ export default function ViajeDetalle() {
   }
 
   return (
-    <div>
+    <div className={esHistorial ? "rounded-xl border border-slate-300 bg-slate-200/70 p-4" : ""}>
       {/* Header */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
