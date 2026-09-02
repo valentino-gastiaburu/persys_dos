@@ -83,25 +83,33 @@ export async function GET(
     });
   }
 
-  // Contar VPUs por detalle para TODOS los viajes (excluyendo devueltos)
+  // Contar VPUs y recopilar sus códigos QR por detalle para TODOS los viajes.
+  // Se excluyen los devueltos: cuando un producto se retira al stock, deja de
+  // contar y su código desaparece de la lista.
   const viajeIds = (viajesData ?? []).map((v: any) => v.id);
   const vpuCountMap: Record<string, number> = {};
+  const vpuCodigosMap: Record<string, string[]> = {};
   if (viajeIds.length > 0) {
     const { data: allVpus } = await supabase
       .from("viaje_producto_unicos")
-      .select("detalle_pedido_id")
+      .select("viaje_id, detalle_pedido_id, productos_unicos(codigo_qr)")
       .in("viaje_id", viajeIds)
       .not("estado", "eq", "devuelto");
-    for (const vpu of allVpus ?? []) {
-      if (vpu.detalle_pedido_id) {
-        vpuCountMap[vpu.detalle_pedido_id] = (vpuCountMap[vpu.detalle_pedido_id] ?? 0) + 1;
+    for (const vpu of (allVpus ?? []) as any[]) {
+      if (!vpu.detalle_pedido_id) continue;
+      vpuCountMap[vpu.detalle_pedido_id] = (vpuCountMap[vpu.detalle_pedido_id] ?? 0) + 1;
+      const qr = vpu.productos_unicos?.codigo_qr;
+      if (qr) {
+        vpuCodigosMap[vpu.detalle_pedido_id] = vpuCodigosMap[vpu.detalle_pedido_id] ?? [];
+        vpuCodigosMap[vpu.detalle_pedido_id].push(qr);
       }
     }
   }
-  // Adjuntar vpu_count a cada línea normal
+  // Adjuntar vpu_count y códigos QR a cada línea normal
   for (const viajeId of Object.keys(lineasPorViaje)) {
     for (const linea of lineasPorViaje[viajeId]) {
       linea.vpu_count = vpuCountMap[linea.id] ?? 0;
+      linea.vpu_codigos = vpuCodigosMap[linea.id] ?? [];
     }
   }
 
@@ -164,6 +172,7 @@ export async function GET(
           devolucion_de: null,
           pendiente_retorno: true,
           vpu_count: vpuEnViaje.length,
+          vpu_codigos: vpuCodigosMap[d.id] ?? [],
         });
       }
     }

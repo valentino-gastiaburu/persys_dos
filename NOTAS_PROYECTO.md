@@ -179,6 +179,20 @@ configuración.
     `registrarHistorialPedido` si el estado del pedido cambió, y se registra en
     `historial_producto_unicos` (evento "cancelado") para cada VPU del viaje.
 
+27. **Distinción del exceso de VPUs en la tabla del pedido** (01/sep/2026): en "Productos del
+    pedido", cuando una línea tiene exceso de VPUs (`vpu_count > cantidad`), se distingue el origen:
+    - Si el exceso **ya está cubierto** por un recojo pendiente de devolver (mismo `producto_id`+talla
+      en `lineasDevolver`) → badge **rojo** `"{N} por devolver"` (las unidades van a regresar por sí
+      solas vía el viaje de regreso; **no es** una acción de almacén).
+    - Si el exceso **no** está cubierto por devolución (exceso real de alistado en viaje aún editable)
+      → se mantiene el badge ámbar `"Retirar {N} u. al stock"` (acción de corrección de almacén).
+    - Cuando el recojo se completa y las unidades vuelven al stock, `vpu_count` deja de contarlas
+      (backend excluye VPU `devuelto`) y el badge **desaparece**.
+    - **Concepto clave**: un VPU = producto único ya **asignado a un viaje** (`viaje_producto_unicos`).
+      El viaje de regreso **no** tiene VPUs hasta que se completa la devolución; los VPUs de las
+      unidades en devolución siguen contando como parte del viaje de entrega (historial inmutable),
+      pero deben **salir del pedido final** (este solo muestra el estado final correcto).
+
 ## Preguntas respondidas en el camino (resumen técnico)
 
 - **¿Por qué `GET /api/auth/me` daba 401?** No era bug del app: (a) el cliente de prueba no

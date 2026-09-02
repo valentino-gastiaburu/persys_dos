@@ -111,6 +111,7 @@ type ViajeLinea = {
   devolucion_de: string | null;
   pendiente_retorno?: boolean;
   vpu_count?: number;
+  vpu_codigos?: string[];
 };
 type Viaje = {
   id: string;
@@ -276,6 +277,15 @@ export default function PedidoDetallePage() {
   const subtotalCorregir = lineasCorregir.reduce((s, l) => s + Number(l.subtotal ?? 0), 0);
   const subtotalPedido = lineasPedido.reduce((s, l) => s + Number(l.subtotal ?? 0), 0);
 
+  // Unidades pendientes de devolver por producto+talla. Sirve para distinguir si
+  // el exceso de una línea del pedido ya está encaminado a devolver (recojo) o si
+  // es un exceso real de alistado que almacén debe corregir.
+  const devolucionPorProducto = new Map<string, number>();
+  for (const d of lineasDevolver) {
+    const key = `${d.producto_id}|${d.talla_vendida ?? ""}`;
+    devolucionPorProducto.set(key, (devolucionPorProducto.get(key) ?? 0) + Number(d.cantidad ?? 0));
+  }
+
   async function confirmar() {
     setConfirmando(true);
     setError(null);
@@ -424,6 +434,7 @@ export default function PedidoDetallePage() {
                           <th className="border-r border-slate-200 px-3 py-2 font-bold">Producto</th>
                           <th className="border-r border-slate-200 px-3 py-2 font-bold">Talla</th>
                           <th className="border-r border-slate-200 px-3 py-2 text-right font-bold">Cantidad</th>
+                          <th className="border-r border-slate-200 px-3 py-2 font-bold">VPU</th>
                           <th className="border-r border-slate-200 px-3 py-2 font-bold">Estado</th>
                           <th className="px-3 py-2 text-right font-bold">Subtotal</th>
                         </tr>
@@ -432,17 +443,24 @@ export default function PedidoDetallePage() {
                         {lineasPedido.map((l) => {
                           const vpuCount = l.vpu_count ?? 0;
                           const exceso = Math.max(0, vpuCount - l.cantidad);
+                          const porDevolver =
+                            devolucionPorProducto.get(`${l.producto_id}|${l.talla_vendida ?? ""}`) ?? 0;
+                          const esPorDevolver = exceso > 0 && porDevolver > 0;
                           return (
                             <tr key={l.id}>
                               <td className="border-r border-slate-200 px-3 py-2 font-mono text-xs text-slate-500">{l.imei}</td>
                               <td className="border-r border-slate-200 px-3 py-2 font-medium text-slate-800">
                                 {l.producto_nombre}
                                 {l.es_extra_motorizado ? " · +motorizado" : ""}
-                                {exceso > 0 && (
+                                {esPorDevolver ? (
+                                  <span className="ml-2 inline-block rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">
+                                    {porDevolver} por devolver
+                                  </span>
+                                ) : exceso > 0 ? (
                                   <span className="ml-2 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">
                                     Retirar {exceso} u. al stock
                                   </span>
-                                )}
+                                ) : null}
                               </td>
                               <td className="border-r border-slate-200 px-3 py-2 text-slate-600">
                                 {l.entalle
@@ -452,6 +470,9 @@ export default function PedidoDetallePage() {
                               <td className="border-r border-slate-200 px-3 py-2 text-right">
                                 <span className="text-slate-600">{l.cantidad}</span>
                                 <span className="ml-1 text-xs text-slate-400">x S/ {Number(l.precio_unitario).toFixed(2)}</span>
+                              </td>
+                              <td className="border-r border-slate-200 px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-500">
+                                {(l.vpu_codigos ?? []).join("; ") || "—"}
                               </td>
                               <td className="border-r border-slate-200 px-3 py-2">
                                 {l.viaje_estado === "terminado" ? (
@@ -473,7 +494,7 @@ export default function PedidoDetallePage() {
                       </tbody>
                       <tfoot>
                         <tr className="border-t border-slate-300 bg-slate-50">
-                          <td colSpan={5} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-slate-500">
+                          <td colSpan={6} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-slate-500">
                             Subtotal del pedido
                           </td>
                           <td className="px-3 py-2 text-right font-bold text-slate-800">
@@ -498,6 +519,7 @@ export default function PedidoDetallePage() {
                             <th className="border-r border-amber-200 px-3 py-2 font-bold">Producto</th>
                             <th className="border-r border-amber-200 px-3 py-2 font-bold">Talla</th>
                             <th className="border-r border-amber-200 px-3 py-2 text-right font-bold">Cantidad</th>
+                            <th className="border-r border-amber-200 px-3 py-2 font-bold">VPU</th>
                             <th className="border-r border-amber-200 px-3 py-2 font-bold">Viaje</th>
                             <th className="px-3 py-2 text-right font-bold">Subtotal</th>
                           </tr>
@@ -519,6 +541,9 @@ export default function PedidoDetallePage() {
                                 <span className="text-slate-600">{l.cantidad}</span>
                                 <span className="ml-1 text-xs text-slate-400">x S/ {Number(l.precio_unitario).toFixed(2)}</span>
                               </td>
+                              <td className="border-r border-amber-200 px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-500">
+                                {(l.vpu_codigos ?? []).join("; ") || "—"}
+                              </td>
                               <td className="border-r border-amber-200 px-3 py-2 text-xs text-slate-500">
                                 {l.viaje_codigo} · {l.viaje_tipo}
                               </td>
@@ -530,7 +555,7 @@ export default function PedidoDetallePage() {
                         </tbody>
                         <tfoot>
                           <tr className="border-t border-amber-300 bg-amber-50">
-                            <td colSpan={5} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-amber-600">
+                            <td colSpan={6} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-amber-600">
                               Subtotal a regresar al stock
                             </td>
                             <td className="px-3 py-2 text-right font-bold text-slate-800">
@@ -555,6 +580,7 @@ export default function PedidoDetallePage() {
                             <th className="border-r border-red-200 px-3 py-2 font-bold">Producto</th>
                             <th className="border-r border-red-200 px-3 py-2 font-bold">Talla</th>
                             <th className="border-r border-red-200 px-3 py-2 text-right font-bold">Cantidad</th>
+                            <th className="border-r border-red-200 px-3 py-2 font-bold">VPU</th>
                             <th className="border-r border-red-200 px-3 py-2 font-bold">Viaje</th>
                             <th className="px-3 py-2 text-right font-bold">Subtotal</th>
                           </tr>
@@ -576,6 +602,9 @@ export default function PedidoDetallePage() {
                                 <span className="text-slate-600">{l.cantidad}</span>
                                 <span className="ml-1 text-xs text-slate-400">x S/ {Number(l.precio_unitario).toFixed(2)}</span>
                               </td>
+                              <td className="border-r border-red-200 px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-500">
+                                {(l.vpu_codigos ?? []).join("; ") || "—"}
+                              </td>
                               <td className="border-r border-red-200 px-3 py-2 text-xs text-slate-500">
                                 {l.viaje_codigo} · {l.viaje_tipo}
                               </td>
@@ -587,7 +616,7 @@ export default function PedidoDetallePage() {
                         </tbody>
                         <tfoot>
                           <tr className="border-t border-red-300 bg-red-50">
-                            <td colSpan={5} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-red-600">
+                            <td colSpan={6} className="px-3 py-2 text-right text-xs uppercase tracking-wide text-red-600">
                               Subtotal por devolver
                             </td>
                             <td className="px-3 py-2 text-right font-bold text-slate-800">
