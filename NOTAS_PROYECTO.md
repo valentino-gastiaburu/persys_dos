@@ -193,6 +193,20 @@ configuración.
       unidades en devolución siguen contando como parte del viaje de entrega (historial inmutable),
       pero deben **salir del pedido final** (este solo muestra el estado final correcto).
 
+28. **Devolución completa = desaparece del pedido final** (01/sep/2026): cuando un recojo ya
+    devolvió todos sus VPUs (0 VPU `pendiente`), la devolución es **historial**: la sección
+    "Por devolver" y el badge "N por devolver" **desaparecen del pedido final**. Además, un
+    producto único ya devuelto al stock (VPU `devuelto`, en la entrega o vía recojo) **no cuenta**
+    como exceso del pedido aunque el VPU del viaje de ida quede en `enviado` (historial inmutable):
+    `vpu_count` lo excluye vía el set `productosDevueltos`. Implementado en `api/pedidos/[id]/route.ts`
+    (`vpu_pendientes`, `productosDevueltos`) y en `page.tsx` (`devolucionCompletadaIds`, filtro de
+    `lineasDevolver` con `vpu_pendientes > 0`).
+    - **Caso real reparado**: recojo `VPACY53G` (pedido QF7B9NF6) quedó en `programado` con la
+      devolución ya completa (2/2 devueltos). Causa: se devolvió con una versión previa del código
+      sin `finalizarRecojo`. Se reparó el dato (viaje → `terminado`, pedido → `confirmado`) y la
+      defensa en profundidad evita reproducirlo: el estado final se deriva de los datos físicos,
+      no solo del campo `viaje.estado`.
+
 ## Preguntas respondidas en el camino (resumen técnico)
 
 - **¿Por qué `GET /api/auth/me` daba 401?** No era bug del app: (a) el cliente de prueba no
@@ -420,3 +434,61 @@ Se hizo wipe completo 3 veces (20–22/ago/2026) para testing limpio. Procedimie
   max sería 2 y no se podría subir a 4. El fix es sumar `l.cantidad + libres`.
 - El mismo cálculo se replica en `manejarCambioCantidad` (handler) y en el JSX del botón
   `+` (para decidir si se habilita o deshabilita).
+
+## PLAN PENDIENTE: Subida de imágenes a Google Drive (no implementado aún)
+
+> **Estado:** plan aprobado por el usuario, documentado aquí. **Aún NO implementado.**
+> Se retomará cuando el usuario lo pida. UX objetivo: `<input type="file">` con preview
+> inmediato → al guardar se sube solo a Drive, se obtiene el link y se guarda en el campo.
+> El usuario no pega links manualmente.
+
+### Decisiones del usuario (01/sep/2026)
+- **Cuenta destino:** cuenta personal de Google del usuario (**OAuth**, no service account).
+- **Alcance:** fotos de **productos** y fotos de **comprobantes de pago**.
+- **Config:** el usuario crea el proyecto de Google Cloud siguiendo mis pasos. Confirmado que
+  **es necesario** crear el proyecto en Google Cloud (no basta con "tener acceso al Drive"):
+  la app necesita proyecto + Drive API + credenciales OAuth para subir programáticamente.
+
+### Contexto actual en el código
+- **Existe** `foto_url` (text) en `productos` y una función `driveImageUrl()` en
+  `src/lib/utils.ts` (convierte link de Drive de share → URL de imagen embebible
+  `drive.google.com/thumbnail?id=...&sz=w1000`).
+- **Existe** campo `URL de imagen (opcional)` en Crear producto
+  (`src/app/(app)/productos/page.tsx` aprox. línea 366, placeholder "Pronto se importará
+  desde el Drive") — es manual (pegar link), NO sube archivos.
+- **No hay** Supabase Storage, ni subida de archivos, ni `googleapis`, ni config de Drive API.
+
+### Configuración (la hace el usuario, guiado)
+1. [console.cloud.google.com](https://console.cloud.google.com) → crear proyecto (ej. "persys").
+2. Activar **Google Drive API** en "APIs & Services".
+3. Crear **OAuth Consent Screen** (External → agregar tu cuenta como test user).
+4. Crear **OAuth Client ID** tipo **Web application**, redirect URI
+   `http://localhost:3000/api/auth/drive/callback`.
+5. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` en `.env.local`.
+6. **Login una sola vez** con tu Google para obtener `GOOGLE_REFRESH_TOKEN` (guardar en
+   `.env.local`). Desde entonces la app sube sola sin pedir login.
+7. **Nota:** aún pendiente decidir detalles de autenticación del token (OAuth refresh vs
+   service account) — el usuario eligió OAuth con cuenta personal.
+
+### Implementación técnica (al retomarlo)
+- **Dep:** agregar `googleapis`.
+- **Backend** (nuevas API routes en `src/app/api/`):
+  - `api/auth/drive/callback/route.ts` — recibe la autorización OAuth inicial y genera el
+    `refresh_token`.
+  - `api/productos/upload/route.ts` y `api/pagos/upload/route.ts` — reciben
+    `multipart/form-data`, suben a Drive con `googleapis`, devuelven el link.
+  - Helper `src/lib/drive.ts`: `getDriveClient()`, `subirImagen(buffer, nombre, mime)` →
+    `drive.files.create({ uploadType: multipart })` → `{ fileId, url }`
+    (`https://drive.google.com/uc?id=FILEID`). Subir con `permission` `anyone/reader`
+    para que el thumbnail renderice sin login del visor.
+- **Frontend:**
+  - Componente reutilizable `SubirImagen` en `src/components/` (preview local con
+    `URL.createObjectURL`, estado "subiendo…", fetch multipart, guarda el link devuelto).
+  - **Productos:** reemplazar el `Input` de URL por `SubirImagen`.
+  - **Pagos:** botón para subir comprobante con link/inline del comprobante.
+- **SQL:** script `supabase/18_pagos_imagen.sql` para agregar `pagos.foto_comprobante text`
+  (el usuario lo corre en el SQL Editor).
+- **Errores:** si la subida falla (red/token), mostrar error y conservar preview local.
+- **Cuota:** las fotos consumen el espacio gratuito del Drive personal (15 GB gratis).
+- **Seguridad:** claves solo en `.env.local` (ya ignorado por `.gitignore`).
+- Posible necesidad de reiniciar dev server tras agregar la dependencia.

@@ -112,6 +112,7 @@ type ViajeLinea = {
   pendiente_retorno?: boolean;
   vpu_count?: number;
   vpu_codigos?: string[];
+  vpu_pendientes?: number;
 };
 type Viaje = {
   id: string;
@@ -261,16 +262,29 @@ export default function PedidoDetallePage() {
   // - lineasCorregir: cosas que quedaron físicamente en un viaje pero NO son
   //   del pedido del cliente (residuo de una edición) y deben regresar al stock.
   // - lineasPedido: lo que el cliente pidió al final (viajes de entrega normales).
+  // Una línea de devolución se considera PENDIENTE solo si su recojo aún tiene
+  // VPUs pendientes (vpu_pendientes > 0). Si la devolución ya se completó
+  // (todos los VPU devueltos), desaparece del pedido final: queda como historial.
   const lineasDevolver = lineasFinales.filter(
-    (l) => l.devolucion && l.estado === "pendiente_devolucion"
+    (l) => l.devolucion && l.estado === "pendiente_devolucion" && (l.vpu_pendientes ?? 0) > 0
   );
   const lineasCorregir = lineasFinales.filter(
     (l) => l.pendiente_retorno || (l.es_extra_motorizado && !l.devolucion)
   );
   const corregirIds = new Set(lineasCorregir.map((l) => l.id));
   const devolverIds = new Set(lineasDevolver.map((l) => l.id));
+  // Una devolución completada (su recojo ya no tiene VPU pendientes) es historial:
+  // no debe aparecer en el pedido final como producto.
+  const devolucionCompletadaIds = new Set(
+    lineasFinales
+      .filter((l) => l.devolucion && l.estado === "pendiente_devolucion" && (l.vpu_pendientes ?? 0) === 0)
+      .map((l) => l.id)
+  );
   const lineasPedido = lineasFinales.filter(
-    (l) => !corregirIds.has(l.id) && !devolverIds.has(l.id)
+    (l) =>
+      !corregirIds.has(l.id) &&
+      !devolverIds.has(l.id) &&
+      !devolucionCompletadaIds.has(l.id)
   );
 
   const subtotalDevolver = lineasDevolver.reduce((s, l) => s + Number(l.subtotal ?? 0), 0);

@@ -89,14 +89,31 @@ export async function GET(
   const viajeIds = (viajesData ?? []).map((v: any) => v.id);
   const vpuCountMap: Record<string, number> = {};
   const vpuCodigosMap: Record<string, string[]> = {};
+  // Conteo de VPU AÚN "pendiente" por detalle. Una línea de devolución se
+  // considera COMPLETA cuando su recojo ya no tiene VPUs pendientes (todos
+  // fueron devueltos), aunque el viaje quede en un estado inconsistente.
+  const vpuPendientesMap: Record<string, number> = {};
   if (viajeIds.length > 0) {
     const { data: allVpus } = await supabase
       .from("viaje_producto_unicos")
-      .select("viaje_id, detalle_pedido_id, productos_unicos(codigo_qr)")
-      .in("viaje_id", viajeIds)
-      .not("estado", "eq", "devuelto");
+      .select("viaje_id, detalle_pedido_id, estado, producto_unico_id, productos_unicos(codigo_qr)")
+      .in("viaje_id", viajeIds);
+
+    // Un producto único ya devuelto al stock (VPU en estado "devuelto", ya sea
+    // en el viaje de entrega o vía un recojo) NO debe contar como exceso del
+    // pedido final. El VPU del viaje de ida puede quedar en "enviado" como
+    // historial inmutable, pero físicamente volvió: se excluye de la cuenta.
+    const productosDevueltos = new Set(
+      (allVpus ?? []).filter((v: any) => v.estado === "devuelto").map((v: any) => v.producto_unico_id)
+    );
+
     for (const vpu of (allVpus ?? []) as any[]) {
       if (!vpu.detalle_pedido_id) continue;
+      if (vpu.estado === "pendiente") {
+        vpuPendientesMap[vpu.detalle_pedido_id] = (vpuPendientesMap[vpu.detalle_pedido_id] ?? 0) + 1;
+      }
+      if (vpu.estado === "devuelto") continue;
+      if (productosDevueltos.has(vpu.producto_unico_id)) continue;
       vpuCountMap[vpu.detalle_pedido_id] = (vpuCountMap[vpu.detalle_pedido_id] ?? 0) + 1;
       const qr = vpu.productos_unicos?.codigo_qr;
       if (qr) {
@@ -105,11 +122,12 @@ export async function GET(
       }
     }
   }
-  // Adjuntar vpu_count y códigos QR a cada línea normal
+  // Adjuntar vpu_count, códigos QR y pendientes a cada línea normal
   for (const viajeId of Object.keys(lineasPorViaje)) {
     for (const linea of lineasPorViaje[viajeId]) {
       linea.vpu_count = vpuCountMap[linea.id] ?? 0;
       linea.vpu_codigos = vpuCodigosMap[linea.id] ?? [];
+      linea.vpu_pendientes = vpuPendientesMap[linea.id] ?? 0;
     }
   }
 
@@ -172,6 +190,7 @@ export async function GET(
           devolucion_de: null,
           pendiente_retorno: true,
           vpu_count: vpuEnViaje.length,
+          vpu_pendientes: vpuPendientesMap[d.id] ?? 0,
           vpu_codigos: vpuCodigosMap[d.id] ?? [],
         });
       }
