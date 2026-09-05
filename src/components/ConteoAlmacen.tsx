@@ -102,6 +102,7 @@ export default function ConteoAlmacen() {
   const lastStatusSyncRef = useRef(0);
   const pendingScanRef = useRef<{ codigo: string; timeout: number } | null>(null);
   const solvedScanRef = useRef<{ codigo: string; ts: number }>({ codigo: "", ts: 0 });
+  const lastDecodeRef = useRef<{ codigo: string; ts: number }>({ codigo: "", ts: 0 });
   const scannerDivId = "inventario-scanner";
 
   useEffect(() => {
@@ -246,19 +247,21 @@ export default function ConteoAlmacen() {
     frameErrRef.current = 0;
     lastStatusSyncRef.current = 0;
     solvedScanRef.current = { codigo: "", ts: 0 };
+    lastDecodeRef.current = { codigo: "", ts: 0 };
     if (pendingScanRef.current?.timeout) clearTimeout(pendingScanRef.current.timeout);
     pendingScanRef.current = null;
     setScannerActivo(true);
     setTimeout(() => {
       try {
-        const scanner = new Html5Qrcode(scannerDivId);
+        const scanner = new Html5Qrcode(scannerDivId, { verbose: false });
         scannerRef.current = scanner;
         scanner
           .start(
             { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 250, height: 250 } },
+            { fps: 12, qrbox: { width: 250, height: 250 }, disableFlip: false, aspectRatio: 1.0 },
             (decodedText) => {
               const codigo = decodedText.trim().toLowerCase();
+              lastDecodeRef.current = { codigo, ts: Date.now() };
               if (
                 !pendingScanRef.current &&
                 solvedScanRef.current.codigo === codigo &&
@@ -288,7 +291,10 @@ export default function ConteoAlmacen() {
               setDetectado(true);
             },
             () => {
-              if (pendingScanRef.current) {
+              const gapOk =
+                lastDecodeRef.current.codigo === pendingScanRef.current?.codigo &&
+                Date.now() - lastDecodeRef.current.ts < 500;
+              if (pendingScanRef.current && !gapOk) {
                 clearTimeout(pendingScanRef.current.timeout);
                 pendingScanRef.current = null;
                 setPendiente(false);
