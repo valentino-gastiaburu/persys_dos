@@ -11,6 +11,7 @@ import {
   getDetallesActivos,
 } from "@/lib/pedidos";
 import { validarStockLineas } from "@/lib/productos";
+import { obtenerFechaHoyLima, esRetrasado } from "@/lib/retraso";
 
 // POST /api/viajes — crea un viaje extra sobre un pedido.
 // Body para tipo "entrega" (agregar productos):

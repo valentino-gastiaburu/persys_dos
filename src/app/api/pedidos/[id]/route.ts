@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 import { calcularTotal, calcularTotalPedido, getDetallesActivos, recalcularTotalViaje } from "@/lib/pedidos";
+import { obtenerFechaHoyLima, esRetrasado } from "@/lib/retraso";
 
 export async function GET(
   request: NextRequest,
@@ -37,9 +38,12 @@ export async function GET(
     .from("pagos")
     .select("*")
     .eq("pedido_id", id)
-    .order("fecha");
+    .order("fecha_pactada", { ascending: true })
+    .order("fecha", { ascending: true });
 
-  const totalPagado = (pagos ?? []).reduce((acc, p) => acc + Number(p.monto), 0);
+  const totalPagado = (pagos ?? [])
+    .filter((p) => p.estado === "pagado")
+    .reduce((acc, p) => acc + Number(p.monto), 0);
   const { data: viajesData } = await supabase
     .from("viajes")
     .select("*")
@@ -197,13 +201,27 @@ export async function GET(
     }
   }
 
+  const hoy = await obtenerFechaHoyLima();
   const viajes = (viajesData ?? []).map((v: any) => ({
     ...v,
+    retrasado: esRetrasado(v.estado, v.fecha, hoy),
     lineas: [
       ...(lineasPorViaje[v.id] ?? []),
       ...(detallesHuermanos[v.id] ?? []),
     ],
   }));
+
+  // Estado visual derivado "retraso" del pedido: algún viaje retrasado.
+  const retraso = viajes.reduce<{ entrega: boolean; recojo: boolean }>(
+    (acc, v: any) => {
+      if (!v.retrasado) return acc;
+      if (v.tipo === "recojo") acc.recojo = true;
+      else acc.entrega = true;
+      return acc;
+    },
+    { entrega: false, recojo: false }
+  );
+  const retrasoActivo = retraso.entrega || retraso.recojo;
 
   return Response.json({
     pedido,
@@ -212,6 +230,7 @@ export async function GET(
     viajes,
     total_pagado: totalPagado,
     deuda: Number(pedido.monto_total) - totalPagado,
+    retraso: retrasoActivo ? retraso : null,
   });
 }
 
@@ -263,7 +282,8 @@ export async function PATCH(
   if (body.costo_envio !== undefined) {
     updates.costo_envio = Number(body.costo_envio);
   }
-  if (body.regalo !== undefined) updates.regalo = Boolean(body.regalo);
+  // El cuerpo ya maneja `regalo` como texto (descripción) dentro del loop de permitidos.
+  // No convertir a boolean: regalo es texto ahora.
   if (body.monto_total !== undefined) updates.monto_total = Number(body.monto_total);
 
   // Si cambia el costo de envío, recalcular el monto_total. El total vive en el

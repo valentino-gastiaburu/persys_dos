@@ -14,6 +14,16 @@ type PedidoRow = {
   deuda: number;
 };
 
+type Cobro = {
+  id: string;
+  estado: string;
+  fecha_pactada: string | null;
+  fecha_pagada: string | null;
+  monto: number | null;
+  metodo_pago: string | null;
+  comprobante: string | null;
+};
+
 export default function PagosPage() {
   const [pedidos, setPedidos] = useState<PedidoRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,53 +114,159 @@ function PagarModal({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const [cobros, setCobros] = useState<Cobro[]>([]);
+  const [pendientes, setPendientes] = useState<Cobro[]>([]);
   const [monto, setMonto] = useState(String(Number(pedido.deuda).toFixed(2)));
   const [metodoPago, setMetodoPago] = useState("yape");
+  const [cobroId, setCobroId] = useState("");
+  const [fechaPago, setFechaPago] = useState("");
+  const [comprobante, setComprobante] = useState("");
+  const [nuevaFechaCobro, setNuevaFechaCobro] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [confirmarSinFecha, setConfirmarSinFecha] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await api<{ pagos: Cobro[] }>(`/api/pedidos/${pedido.id}/pagos`);
+      const lista = data?.pagos ?? [];
+      setCobros(lista);
+      setPendientes(lista.filter((c) => c.estado === "pendiente"));
+    })();
+  }, [pedido.id]);
+
+  const montoValor = Number(monto);
+  const cubreTodo = !Number.isNaN(montoValor) && montoValor >= Number(pedido.deuda) - 0.001;
+  const montoPorCobro =
+    pendientes.length > 0 && Number(pedido.deuda) > 0
+      ? Number(pedido.deuda) / pendientes.length
+      : 0;
 
   async function registrar() {
     setError(null);
     setLoading(true);
-    const { error } = await api(`/api/pedidos/${pedido.id}/pagos`, {
+    const body: Record<string, unknown> = {
+      monto: Number(monto),
+      metodo_pago: metodoPago,
+      fecha_pagada: fechaPago || undefined,
+      comprobante: comprobante.trim() || undefined,
+    };
+    if (cobroId) body.pago_id = cobroId;
+
+    const { error: err } = await api(`/api/pedidos/${pedido.id}/pagos`, {
       method: "POST",
-      body: JSON.stringify({ monto: Number(monto), metodo_pago: metodoPago }),
+      body: JSON.stringify(body),
     });
     setLoading(false);
-    if (error) setError(error);
-    else onDone();
+    if (err) {
+      setError(err);
+      return;
+    }
+    // Tras cobrar: si no cubre todo y no se puso fecha del siguiente cobro, avisar.
+    if (!cubreTodo && !nuevaFechaCobro) {
+      setConfirmarSinFecha(true);
+      return;
+    }
+    if (!cubreTodo && nuevaFechaCobro) {
+      await api(`/api/pedidos/${pedido.id}/pagos`, {
+        method: "POST",
+        body: JSON.stringify({ estado: "pendiente", fecha_pactada: nuevaFechaCobro }),
+      });
+    }
+    onDone();
   }
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`Cobrar ${pedido.codigo}`}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button onClick={registrar} disabled={loading}>Registrar pago</Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <p className="text-sm text-slate-600">
-          Deuda: <strong>S/ {Number(pedido.deuda).toFixed(2)}</strong>
-        </p>
-        <Input label="Monto (S/)" type="number" step="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} />
-        <Select label="Método de pago" value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)}>
-          <option value="yape">Yape</option>
-          <option value="bcp">BCP</option>
-          <option value="interbank">Interbank</option>
-          <option value="bbva">BBVA</option>
-          <option value="scotiabank">Scotiabank</option>
-          <option value="plin">Plin</option>
-          <option value="banco_nacion">Banco de la Nación</option>
-          <option value="tarjeta_link">Tarjeta (Link)</option>
-          <option value="efectivo">Efectivo</option>
-        </Select>
-        <ErrorBanner message={error} />
-      </div>
-    </Modal>
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        title={`Cobrar ${pedido.codigo}`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+            <Button onClick={registrar} disabled={loading}>Registrar pago</Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">
+            Deuda: <strong>S/ {Number(pedido.deuda).toFixed(2)}</strong>
+          </p>
+
+          {pendientes.length > 0 && (
+            <>
+              <label className="text-xs font-semibold text-slate-500">Cobros programados (deudas)</label>
+              <Select value={cobroId} onChange={(e) => setCobroId(e.target.value)}>
+                <option value="">Pago sin vincular a un cobro previo</option>
+                {pendientes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    Deuda del {c.fecha_pactada ?? "—"} · S/ {montoPorCobro.toFixed(2)}
+                  </option>
+                ))}
+              </Select>
+            </>
+          )}
+
+          <Input label="Monto (S/)" type="number" step="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} />
+          <Select label="Método de pago" value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)}>
+            <option value="yape">Yape</option>
+            <option value="bcp">BCP</option>
+            <option value="interbank">Interbank</option>
+            <option value="bbva">BBVA</option>
+            <option value="scotiabank">Scotiabank</option>
+            <option value="plin">Plin</option>
+            <option value="banco_nacion">Banco de la Nación</option>
+            <option value="tarjeta_link">Tarjeta (Link)</option>
+            <option value="efectivo">Efectivo</option>
+          </Select>
+          <Input label="Fecha de pago" type="date" value={fechaPago} onChange={(e) => setFechaPago(e.target.value)} />
+          <Input
+            label="Comprobante de pago (link Drive)"
+            value={comprobante}
+            onChange={(e) => setComprobante(e.target.value)}
+            placeholder="Pega el link del comprobante"
+          />
+
+          {!cubreTodo && (
+            <Input
+              label="Fecha del siguiente cobro (opcional)"
+              type="date"
+              value={nuevaFechaCobro}
+              onChange={(e) => setNuevaFechaCobro(e.target.value)}
+            />
+          )}
+
+          <ErrorBanner message={error} />
+        </div>
+      </Modal>
+
+      {confirmarSinFecha && (
+        <Modal
+          open
+          onClose={() => setConfirmarSinFecha(false)}
+          title="Siguiente cobro sin fecha"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmarSinFecha(false)}>
+                Volver
+              </Button>
+              <Button
+                onClick={() => {
+                  setConfirmarSinFecha(false);
+                  onDone();
+                }}
+              >
+                Continuar
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-slate-700">
+            Te estás yendo sin registrar la fecha del siguiente cobro. ¿Seguro que deseas continuar?
+          </p>
+        </Modal>
+      )}
+    </>
   );
 }

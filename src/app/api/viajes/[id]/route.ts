@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 import { registrarHistorialPedido, syncEstadoPedidoPorViajes, recalcularTotalViaje, sincronizarTotalesPedido, recalcularEstadoViaje } from "@/lib/pedidos";
+import { obtenerFechaHoyLima, esRetrasado } from "@/lib/retraso";
 
 // GET /api/viajes/[id] — detalle del viaje: productos a alistar + alistados
 export async function GET(
@@ -86,8 +87,10 @@ export async function GET(
     };
   });
 
+  const retrasado = esRetrasado(viaje.estado, viaje.fecha, await obtenerFechaHoyLima());
+
   return Response.json({
-    viaje,
+    viaje: { ...viaje, retrasado },
     cliente: viaje.pedidos?.clientes ?? null,
     pedido_codigo: viaje.pedidos?.codigo,
     pedido_estado: viaje.pedidos?.estado,

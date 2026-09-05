@@ -3,6 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 import { generarCodigoPedido, generarResumen, calcularTotal } from "@/lib/pedidos";
 import { validarStockLineas } from "@/lib/productos";
+import { obtenerFechaHoyLima, esRetrasado } from "@/lib/retraso";
 
 // POST /api/pedidos — crea el pedido completo en un solo lote.
 // Body: campos del pedido + lineas[] + confirmar (boolean).
@@ -85,8 +86,9 @@ export async function POST(request: NextRequest) {
       metodo_pago: body.metodo_pago || null,
       partes_a_pagar: Number(body.partes_a_pagar ?? 1),
       monto_primer_pago: body.monto_primer_pago ? Number(body.monto_primer_pago) : null,
+      comprobante: body.comprobante || null,
       observaciones: body.observaciones || null,
-      regalo: Boolean(body.regalo),
+      regalo: body.regalo || null,
     })
     .select()
     .single();
@@ -201,7 +203,7 @@ export async function GET(request: NextRequest) {
 
   // Solo para vendedoras (no controller): ver los pedidos de cualquiera; controller los ve todos.
   const { data: pedidos, error: err } = await query
-    .order("fecha_entrega", { ascending: true })
+    .order("creado_el", { ascending: false })
     .limit(200);
 
   if (err) return Response.json({ error: "Error de base de datos" }, { status: 500 });
@@ -213,6 +215,7 @@ export async function GET(request: NextRequest) {
     const { data: pagos } = await supabase
       .from("pagos")
       .select("pedido_id, monto")
+      .eq("estado", "pagado")
       .in("pedido_id", ids);
     pagosPorPedido = {};
     for (const p of pagos ?? []) {
@@ -220,8 +223,27 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Determinar qué pedidos tienen un viaje retrasado (estado visual derivado,
+  // nunca persistido): algún viaje en programado/alistado con fecha < hoy.
+  const retrasoPorPedido: Record<string, { entrega: boolean; recojo: boolean }> = {};
+  if (ids.length > 0) {
+    const hoy = await obtenerFechaHoyLima();
+    const { data: viajesRows } = await supabase
+      .from("viajes")
+      .select("pedido_id, tipo, estado, fecha")
+      .in("pedido_id", ids);
+    for (const v of viajesRows ?? []) {
+      if (!esRetrasado(v.estado, v.fecha, hoy)) continue;
+      const r = retrasoPorPedido[v.pedido_id] ?? { entrega: false, recojo: false };
+      if (v.tipo === "recojo") r.recojo = true;
+      else r.entrega = true;
+      retrasoPorPedido[v.pedido_id] = r;
+    }
+  }
+
   const resultado = (pedidos ?? []).map((p: any) => {
     const pagado = pagosPorPedido[p.id] ?? 0;
+    const r = retrasoPorPedido[p.id];
     return {
       ...p,
       cliente_nombre: p.clientes
@@ -231,6 +253,7 @@ export async function GET(request: NextRequest) {
       vendedora_nombre: p.vendedora?.nombre ?? null,
       total_pagado: pagado,
       deuda: Number(p.monto_total) - pagado,
+      retraso: r ?? null,
     };
   });
 

@@ -492,3 +492,198 @@ Se hizo wipe completo 3 veces (20–22/ago/2026) para testing limpio. Procedimie
 - **Cuota:** las fotos consumen el espacio gratuito del Drive personal (15 GB gratis).
 - **Seguridad:** claves solo en `.env.local` (ya ignorado por `.gitignore`).
 - Posible necesidad de reiniciar dev server tras agregar la dependencia.
+
+## Estado visual "Retrasado" (decisión #29 — 03/sep/2026)
+
+`"Retrasado"` es un estado **visual derivado**, NUNCA persistido en la BD. No se crean
+tablas/columnas/funciones/enums. El estado real de viajes (`programado`/`alistado`...) y del
+pedido (`confirmado`/...) queda intacto.
+
+- **Regla de retraso (por viaje):** un viaje está retrasado si `estado ∈ {programado, alistado}`
+  y su `fecha` programada es **anterior** a hoy (hoy NO cuenta). Enviado/terminado/cancelado
+  nunca están retrasados. Aplica tanto a entregas como a recojos.
+- **Pedido retrasado:** si tiene ≥1 viaje retrasado, el badge reemplaza el estado real por
+  `"Entrega retrasada"` (prioridad si hay entrega) o `"Recojo retrasado"`.
+- **Fuente de hora (2 redundantes, proveedores/redes independientes):** NO se usa la hora del
+  PC (mal configurada). Se lee el header HTTP `Date` (GMT/UTC) en cadena de hosts masivos:
+  `api.github.com` → `www.cloudflare.com` → `example.com`; luego GMT − 5h = Lima (UTC-5 fijo,
+  Perú sin DST). Fallback final `new Date()` del server solo si todos fallan. Caché TTL 30s.
+  Helper único: `src/lib/retraso.ts` (`obtenerFechaHoyLima`, `esRetrasado`,
+  `etiquetaRetrasoPedido`). Reusar ese helper, NO duplicar lógica.
+- **El filtro "Retrasado"** en la lista de pedidos se hace **en el cliente** (el backend no
+  puede filtrar un estado que no existe en BD): el backend agrega un campo derivado `retraso`
+  por fila, y el front filtra en memoria cuando el Select vale `retrasado`.
+- **Dónde se pinta:** lista de pedidos (badge + filtro), detalle de pedido (badge de pedido y
+  de cada viaje), lista de almacén (`AlmacenLista`, badge + fila resaltada `bg-red-50`),
+  detalle de viaje (`ViajeDetalle`, badge). Todos usan el `retrasado`/`retraso` que adjunta el
+  backend en sus respectivos GETs.
+
+## Módulo de Cargos (documentos impresos del viaje de entrega — 03/sep/2026)
+
+**Unidad de impresión = viaje de ENTREGA** (`viajes.tipo='entrega'`, no el pedido). Los viajes de
+**recojo NO** tienen cargo, y los viajes **cancelados** se excluyen siempre (lista y `nro_viaje`).
+
+Cada viaje de entrega imprime **dos documentos A4** (Cargo de Despacho + Cargo de Agencia),
+pensados para `window.print()` con CSS `@page A4 portrait; margin 10mm`. **Varios cargos caben
+en una sola hoja** (NO una página por viaje: cada "cargo" es `break-inside-avoid`, no fuerza
+`break-after`).
+
+### Datos de un cargo (desde `/api/cargos`)
+- `codigo_viaje` = código del viaje (va como "Cód. Envío"), `codigo_pedido` = código del pedido.
+- `nro_viaje` = número ordinal del viaje de entrega (1ro, 2do…) contando solo entregas no
+  canceladas ordenadas por `creado_el`. Se pinta diminuto `V{n}` en la esquina sup. izq.
+- Productos = **solo los del viaje** (`detalles_pedido.viaje_id`), no todos los del pedido.
+- `ciudad` → se muestra como **"Ciudad"** en ENVIO y como **"Distrito"** en VISITA.
+- `fecha_viaje` es la fecha del viaje (filtro), `fecha_entrega` la fecha del pedido.
+- `monto_total` = `viaje.total`. Regalo y observaciones son campos **distintos** de BD
+  (`pedidos.regalo` texto y `pedidos.observaciones` texto).
+
+### Diseño ENVIO vs VISITA (depende de `pedidos.tipo_pedido`)
+**CargoDespacho:**
+- ENVIO: "Tipo de Envío: X Menor", muestra Fecha de pago + Empresa, "Ciudad".
+- VISITA: "Mediante: MOTORIZADO", sin Fecha de pago ni Empresa, "Distrito", añade filas
+  Regalo y Observación dentro de Info del Pedido. Productos muestran `[Entallar a: <talla>]`
+  cuando hay entalle.
+- La 1ra columna SIEMPRE se titula **"Interno"** (aunque sea visita).
+
+**CargoAgencia:**
+- ENVIO: Remitente (dueña de `config`) + Destinatario (cliente) + Productos + Regalo.
+- VISITA: **sin remitente** (solo Destinatario/cliente) + Fecha Envio + Resumen de Productos +
+  Regalo + bloque OBS (observaciones). Header indica "Visita".
+
+### Configuración (`configuraciones` clave/valor, se edita en Admin)
+- `cargo_duenia_nombre`, `cargo_duenia_dni`, `cargo_duenia_celular`, `cargo_duenia_direccion`
+  → remitente de CargoAgencia ENVIO.
+- `cargo_encargado_despacho` → campo "E. despacho" de CargoDespacho.
+
+### Flujo de la página `/cargos`
+- Filtros auto-aplicados (debounce 250ms, sin botón "Buscar"): rango `desde`/`hasta`, `tipo`
+  (envio/visita) y `q` (código de viaje). Botón "Quitar filtros". Sin paginación (trae todos
+  los viajes de entrega no cancelados). Ordenados por `viajes.fecha` ascendente.
+- Checkboxes por viaje + Seleccionar todos / Ninguno + "Imprimir seleccionados".
+- **"Cargos de hoy"** (botón en lista de Pedidos) navega a `/cargos?hoy=1`: la página consulta
+  `GET /api/hoy` (devuelve la fecha de hoy de Lima calculada en server con
+  `obtenerFechaHoyLima`), pone `desde=hasta=hoy` como filtro y listo — **sin auto-impresión**.
+  El usuario ve el módulo ya filtrado por hoy y usa "Imprimir seleccionados" cuando quiera.
+
+### Archivos clave
+- `src/app/api/cargos/route.ts` — GET cargos (por viaje, filtros, excluye cancelados, nro_viaje).
+- `src/app/api/hoy/route.ts` — GET `{hoy}` (fecha de hoy de Lima, server-side).
+- `src/app/(app)/cargos/page.tsx` — página/printer, manejo `?hoy=1&print=1`.
+- `src/components/CargoDespacho.tsx`, `src/components/CargoAgencia.tsx` — ENVIO vs VISITA.
+- `src/lib/cargos.ts` — tipos `CargoPedido`/`CargoConfig` + labels.
+- `src/components/AdminClient.tsx` — campos de la dueña + encargado de despacho.
+- `supabase/18_regalo_text.sql` — migración idempotente `pedidos.regalo` boolean→text (corrida).
+- `src/app/globals.css` — `@page` A4 + reglas `@media print` (`#print-sheet`, break-inside-avoid).
+
+## Pagos / deudas (cobros programados) + comprobante — 03/sep/2026
+
+Reestructura del modelado de pagos. **La tabla `pagos` pasa a ser un libro de cobros con
+estado** (`pendiente` → `pagado`), en vez de solo dinero recibido. Una fila de `pagos` es un
+"cobro": primero es una promesa de pago futura (pendiente, con fecha pactada) y cuando llega
+el dinero se completa (marca pagado + fecha_pagada + monto + método + comprobante).
+
+### Cambios de schema (`supabase/19_pagos_deudas.sql`, idempotente, NO corrida aún)
+- Nuevo enum `pago_estado` (`pendiente`,`pagado`).
+- `pagos` gana columnas: `estado` (default `pendiente`), `fecha_pactada` (date, fecha
+  acordada), `fecha_pagada` (date, cuándo se pagó), `comprobante` (text, link Drive).
+- `pagos.monto` y `pagos.metodo_pago` ya **no son NOT NULL** (se llenan al cobrar). El
+  `check (monto > 0)` queda (null > 0 = null → pasa).
+- `pedidos.comprobante` (text): capturado en el form "¿Pagó? Sí" y trasladado al cobro
+  pagado en la confirmación.
+- Backfill: cobros existentes → `estado='pagado'`, `fecha_pagada = fecha::date`.
+- Índice `idx_pagos_pedido_estado (pedido_id, estado)`.
+
+### Reglas
+- **Deuda pendiente** = cobros `pendiente` (también equivale a `monto_total − Σ pagos pagados`).
+  Todo cálculo de deuda (lista, detalle, cargos, pagos) suma **solo `estado='pagado'`**.
+- **Al confirmar** (`confirmarPedido`): se genera SIEMPRE un cobro inicial con
+  `fecha_pactada = fecha_entrega` del pedido. Si `monto_primer_pago > 0` ("¿Pagó? Sí" o
+  "Primer pago" de partes>1) ese cobro se marca `pagado` (monto, método, fecha_pagada=hoy,
+  `tipo='primer_pago'`, `comprobante` si vino del form); si no, queda `pendiente`.
+- **Puede haber varias deudas** con distintas fechas (varios cobros pendientes).
+- **Settle** (cobrar): `POST /pagos` con `pago_id` cancela/settlea el cobro pendiente; sin
+  `pago_id` crea un cobro pagado nuevo. Guard `monto <= deuda`.
+- **Agregar deuda futura**: `POST /pagos { estado:'pendiente', fecha_pactada }`.
+- **Editar fecha pactada**: `PATCH /pagos/[pagoId]`. **Eliminar** solo pendientes:
+  `DELETE /pagos/[pagoId]`. No se editan montos ya pagados (evita agujeros).
+- **Guard**: NO se puede crear un cobro pendiente nuevo si la deuda ya está en 0
+  (error "La deuda ya está cubierta").
+- **Limpieza automática**: si un pago deja la deuda en 0 exacto, los cobros
+  pendientes restantes se ELIMINAN en el mismo POST (quedan solo los pagados).
+- **Monto visual por deuda**: en el detalle y en el modal cobrar, cada cobro
+  pendiente muestra `S/ deuda / nº pendientes` (reparto de lo que falta). Es
+  derivado en memoria, se ajusta solo al crear/borrar/cobrar cobros. Nunca se
+  persiste ese monto por cobro (individual), solo fecha + estado.
+- **Borrar cobro**: botón en cada deuda pendiente del detalle
+  (`DELETE /pagos/[pagoId]`) con confirmación y recarga.
+
+### Flujo de "siguiente cobro" (al registrar un pago parcial)
+- En "Cobrar"/"Registrar pago", si el monto no cubre la deuda → campo opcional
+  **"Fecha del siguiente cobro"**. Si se va sin llenarlo → modal
+  **"Te estás yendo sin registrar la fecha del siguiente cobro. ¿Seguro que deseas continuar?"**
+  con **Volver / Continuar**.
+
+### Comprobante (Google Drive — plan ya documentado, upload aún NO implementado)
+- El campo `comprobante` es `text` (link). Se muestra como enlace en Pagos/detalle.
+- El upload a Drive (`pagos.foto_comprobante`→`comprobante`, `SubirImagen`, `/api/pagos/upload`,
+  setup GCP OAuth) se integra más adelante, sin bloquear esta feature. Por ahora se pega el link.
+
+### Archivos clave
+- `supabase/19_pagos_deudas.sql` — migración (correr en SQL Editor).
+- `src/lib/pedidos.ts` (`confirmarPedido`) — genera el cobro inicial al confirmar.
+- `src/app/api/pedidos/[id]/pagos/route.ts` — GET/POST (settle / nuevo pendiente / nuevo pagado).
+- `src/app/api/pedidos/[id]/pagos/[pagoId]/route.ts` — PATCH/DELETE.
+- `src/app/api/pedidos/route.ts`, `api/pedidos/[id]/route.ts`, `api/cargos/route.ts` — deuda
+  solo sumando `pagado`.
+- `src/app/(app)/pagos/page.tsx` — Cobrar modal (settle + siguiente cobro + confirm).
+- `src/app/(app)/pedidos/nuevo/page.tsx` — campo comprobante en "¿Pagó? Sí".
+- `src/app/(app)/pedidos/[id]/page.tsx` — deudas pendientes + cobros pagados + editar fecha +
+  agregar deuda + registrar pago.
+
+## Formato de QR — 05/sep/2026
+
+- Los QRs del sistema viejo (AppSheet) codifican IDs de **8 hex minúsculas**
+  (p. ej. `f22beca3`), impresos con `api.qrserver.com` (QR estándar ISO 18004).
+- Persys ahora genera los `productos_unicos.codigo_qr` con `randomHexCode(8)`
+  (`src/lib/utils.ts`) en `POST /api/productos/[id]/stock` y en las tandas
+  (`/api/tandas`). Antes usaba `randomCode(10)` alfanumérico.
+- Los códigos de pedido/viaje siguen con `randomCode` (no cambian).
+- **Base limpiada (05/sep/2026)**: se borraron pedidos, viajes, pagos, detalles,
+  productos_unicos (44), movimientos_stock, tandas, clientes (8), productos (9),
+  producto_tallas, historiales e inconsistencias. Se conservaron usuarios (4),
+  tallas (20 seed), configuraciones y motorizados. El borrado se hizo vía REST
+  con la anon key (política `app_full_access`); queda pendiente la importación
+  del stock viejo desde el export AppSheet/Excel.
+- **Importación de stock viejo** (`supabase/20_import_stock_viejo.sql`, generado
+  desde `Base de datos Persys - Hoja 13.csv`): 722 unidades / 172 productos.
+  El CSV: cada fila = unidad con su `ID_producto` 8-hex (se usa como
+  `codigo_qr`), `Descripcion`, `IMEI`, `TALLA` (formato `Talla_30` → se guarda
+  como `30`). Normaliza `0706CAO`→`VESTIDO LARGO CAOBA` (2 unidades del mismo
+  producto). Agrega `Talla_3` (tipo C) al seed. Crea tanda `INI20260905`
+  ("Importación inicial") e inserta kardex de entrada por (producto,talla).
+  Pendiente: correrlo en el SQL Editor y verificar conteos.
+
+## Pestaña "Conteo" — 05/sep/2026
+
+- En Productos Únicos se agregó el tab **"Conteo"** (`src/components/ConteoAlmacen.tsx`).
+- La cámara **NO se abre sola**: botón "Activar cámara"; una vez activada queda
+  encendida y permite escanear QR tras QR ("Apagar cámara" para pausar). El input
+  manual sirve siempre.
+- Escaneo = solo memoria, **una consulta** inicial `GET /api/productos-unicos`
+  (Map `codigo_qr` → unidad + "esperados" por IMEI·talla según `en_almacen`).
+- Clasificación: verde OK (`en_almacen`), ámbar "Fuera de lugar" (el sistema dice
+  que está en viaje/entregado/devuelto/almacén espera), rojo "Desconocido" (QR
+  inexistente), rojo "Repetido". QR con formato inválido → aviso "QR no reconocido"
+  sin registrarse. Toda fila tiene "quitar" para corregir escaneos por error.
+- Dos columnas: izq. "Stock que debería estar" (unidades `en_almacen` pendientes; se van
+  quitando a medida que se escanean), der. "Lo que vas escaneando". Lo que NO debería estar
+  en stock se agrega igual pero al inicio de la columna derecha, en rojo, indicando el
+  motivo (sistema dice que está en viaje/entregado/devuelto/almacén espera, código
+  desconocido, o ya escaneado) y su Viaje + Pedido asignado. Los OK quedan en verde abajo.
+- `GET /api/productos-unicos` ahora incluye `pedido` y `viaje` (códigos) por unidad, desde
+  `viaje_producto_unicos` (última asignación por `fecha_alistado`).
+- Sesión auto-guardada en localStorage (`persys:conteo`, v2 de formato); al recargar se
+  reconcilia contra el snapshot actual. Sin cambios de BD.
+
+

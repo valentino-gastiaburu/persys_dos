@@ -358,13 +358,29 @@ export async function confirmarPedido(
     motivo: "Pedido confirmado por la vendedora",
   });
 
-  if (Number(confirmado.monto_primer_pago) > 0) {
+  // Cobros (deudas): siempre se origina un cobro PENDIENTE con fecha pactada
+  // = fecha de entrega del pedido. Si hay monto_primer_pago ("¿Pagó? Sí" o
+  // "Primer pago" de partes>1), ese cobro se marca PAGADO de una.
+  const fechaPactada = pedido.fecha_entrega ? pedido.fecha_entrega.slice(0, 10) : null;
+  const primerPago = Number(confirmado.monto_primer_pago);
+  if (primerPago > 0) {
     await supabase.from("pagos").insert({
       pedido_id: id,
-      monto: Number(confirmado.monto_primer_pago),
+      estado: "pagado",
+      fecha_pactada: fechaPactada,
+      fecha_pagada: new Date().toISOString().slice(0, 10),
+      monto: primerPago,
       metodo_pago: confirmado.metodo_pago || "efectivo",
       persona_id: userId,
       tipo: "primer_pago",
+      comprobante: confirmado.comprobante || null,
+    });
+  } else {
+    await supabase.from("pagos").insert({
+      pedido_id: id,
+      estado: "pendiente",
+      fecha_pactada: fechaPactada,
+      persona_id: userId,
     });
   }
 

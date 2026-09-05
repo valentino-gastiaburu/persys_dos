@@ -49,6 +49,12 @@ const ICONOS: Record<string, React.ReactNode> = {
       <circle cx="18.5" cy="18.5" r="2.5" />
     </>
   ),
+  cargos: (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6M9 13h6M9 17h6" />
+    </>
+  ),
   admin: (
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
   ),
@@ -73,13 +79,14 @@ export default function Sidebar({ user }: { user: SessionUser }) {
     { href: "/productos-unicos", label: "Productos Únicos", icon: "unicos" },
     { href: "/clientes", label: "Clientes", icon: "clientes" },
     { href: "/pagos", label: "Pagos", icon: "pagos" },
+    { href: "/cargos", label: "Cargos", icon: "cargos" },
     { href: "/almacen", label: "Almacén / Viajes", icon: "almacen", show: esAlmacen },
     { href: "/admin", label: "Admin", icon: "admin", show: user.rol === "admin" },
   ];
 
   return (
     <>
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
+      <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
         <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-lg font-bold text-white">
             P
@@ -90,7 +97,7 @@ export default function Sidebar({ user }: { user: SessionUser }) {
           </div>
         </div>
 
-        <nav className="flex-1 space-y-1 px-2 py-3">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
           {links
             .filter((l) => l.show !== false)
             .map((l) => (

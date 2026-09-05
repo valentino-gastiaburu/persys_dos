@@ -11,8 +11,8 @@ const ESTADO_BADGE: Record<string, string> = {
   solicitado: "amber",
   confirmado: "blue",
   alistado: "purple",
-  enviado: "amber",
-  entregado: "green",
+  enviado: "greenLight",
+  entregado: "greenStrong",
   esperando_devolucion: "red",
   esperando_cambio: "purple",
   cerrado: "slate",
@@ -70,7 +70,7 @@ type Pedido = {
   observaciones: string | null;
   monto_total: number;
   resumen_productos: string | null;
-  regalo: boolean;
+  regalo: string | null;
   clientes: { nombre: string; apellido: string | null; telefono: string; direccion: string | null } | null;
 };
 type Detalle = {
@@ -90,7 +90,17 @@ type Detalle = {
   es_extra_motorizado: boolean;
 };
 
-type Pago = { id: string; monto: number; metodo_pago: string; tipo: string; fecha: string };
+type Pago = {
+  id: string;
+  monto: number | null;
+  metodo_pago: string | null;
+  tipo: string;
+  fecha: string;
+  estado: string;
+  fecha_pactada: string | null;
+  fecha_pagada: string | null;
+  comprobante: string | null;
+};
 type ViajeLinea = {
   id: string;
   imei: string;
@@ -120,6 +130,7 @@ type Viaje = {
   tipo: string;
   motivo_recojo: string | null;
   estado: string;
+  retrasado?: boolean;
   fecha: string | null;
   fecha_devolucion: string | null;
   direccion: string | null;
@@ -142,6 +153,8 @@ export default function PedidoDetallePage() {
   const [error, setError] = useState<string | null>(null);
   const [rol, setRol] = useState<string | null>(null);
   const [showPago, setShowPago] = useState(false);
+  const [showNuevaDeuda, setShowNuevaDeuda] = useState(false);
+  const [editarCobro, setEditarCobro] = useState<Pago | null>(null);
   const [showEditarPedido, setShowEditarPedido] = useState(false);
   const [showEditarProductos, setShowEditarProductos] = useState(false);
   const [showNuevoViajeEntrega, setShowNuevoViajeEntrega] = useState(false);
@@ -195,10 +208,22 @@ export default function PedidoDetallePage() {
     cargar();
   }, [cargar]);
 
+  async function borrarCobro(cobro: Pago) {
+    if (!window.confirm("¿Eliminar este cobro pendiente?")) return;
+    setError(null);
+    const { error } = await api(`/api/pedidos/${id}/pagos/${cobro.id}`, { method: "DELETE" });
+    if (error) setError(error);
+    else cargar();
+  }
+
   if (loading) return <Spinner />;
   if (!pedido) return <ErrorBanner message={error ?? "Pedido no encontrado"} />;
 
   const deuda = Number(pedido.monto_total) - totalPagado;
+  // Monto visual de cada deuda: lo que falta pagar repartido entre los cobros
+  // pendientes. Es derivado en memoria (se ajusta solo al crear/borrar/cobrar).
+  const pendientes = pagos.filter((p) => p.estado === "pendiente");
+  const montoPorCobro = pendientes.length > 0 && deuda > 0 ? deuda / pendientes.length : 0;
   const totalPendienteRetiro = viajes
     .filter((v) => v.estado !== "cancelado" && v.estado !== "terminado" && v.estado !== "enviado")
     .flatMap((v) => v.lineas)
@@ -207,6 +232,19 @@ export default function PedidoDetallePage() {
       return sum + Math.max(0, vpuCount - l.cantidad);
     }, 0);
   const hayPendientesRetiro = totalPendienteRetiro > 0;
+
+  // Estado visual derivado "Retrasado" (nunca persistido): algún viaje del
+  // pedido no se envió y su fecha programada ya pasó.
+  const viajesRetrasados = viajes.filter((v) => v.retrasado);
+  const pedidoRetraso = viajesRetrasados.reduce<{ entrega: boolean; recojo: boolean }>(
+    (acc, v) => {
+      if (v.tipo === "recojo") acc.recojo = true;
+      else acc.entrega = true;
+      return acc;
+    },
+    { entrega: false, recojo: false }
+  );
+  const pedidoRetrasado = pedidoRetraso.entrega || pedidoRetraso.recojo;
   const puedeConfirmar = ["borrador", "solicitado"].includes(pedido.estado) && !hayPendientesRetiro;
   const puedeCancelar = ["solicitado", "confirmado"].includes(pedido.estado);
   const puedeVolverSolicitado = pedido.estado === "confirmado" && !hayPendientesRetiro;
@@ -342,7 +380,13 @@ export default function PedidoDetallePage() {
             </Link>
             <span className="text-slate-300">/</span>
             <h1 className="text-2xl font-bold text-slate-800">{pedido.codigo}</h1>
-            <Badge color={ESTADO_BADGE[pedido.estado] ?? "slate"}>{ESTADO_LABEL[pedido.estado] ?? pedido.estado}</Badge>
+            <Badge color={pedidoRetrasado ? "red" : ESTADO_BADGE[pedido.estado] ?? "slate"}>
+              {pedidoRetrasado
+                ? pedidoRetraso.entrega
+                  ? "Entrega retrasada"
+                  : "Recojo retrasado"
+                : ESTADO_LABEL[pedido.estado] ?? pedido.estado}
+            </Badge>
             {hayPendientesRetiro && (
               <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
                 Pendiente de retiro de productos ({totalPendienteRetiro} u.)
@@ -659,33 +703,92 @@ export default function PedidoDetallePage() {
                 <h2 className="text-sm font-semibold text-slate-800">Pagos</h2>
               </div>
               <div className="p-5">
-              {pagos.length === 0 ? (
-                <p className="text-sm text-slate-400">Sin pagos registrados.</p>
-              ) : (
-                <div className="space-y-1">
-                  {pagos.map((p) => (
-                    <div key={p.id} className="flex items-center justify-between py-1 text-sm">
-                      <span className="text-slate-600">
-                        {new Date(p.fecha).toLocaleDateString("es-PE")} · {p.metodo_pago}
-                        {p.tipo === "primer_pago" ? " (primer pago)" : ""}
-                      </span>
-                      <span className="font-medium text-emerald-700">S/ {Number(p.monto).toFixed(2)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                <span className="text-slate-600">Deuda pendiente</span>
-                {deuda > 0 ? (
-                  <span className="font-bold text-red-600">S/ {deuda.toFixed(2)}</span>
+                {pagos.length === 0 ? (
+                  <p className="text-sm text-slate-400">Sin cobros registrados.</p>
                 ) : (
-                  <span className="font-bold text-emerald-600">Pagado</span>
+                  <div className="space-y-3">
+                    {pendientes.length > 0 && deuda > 0 && (
+                      <div>
+                        <p className="mb-1 text-xs font-semibold uppercase text-slate-500">Deudas (por cobrar)</p>
+                        <div className="space-y-1">
+                          {pendientes.map((p) => (
+                            <div key={p.id} className="flex items-center justify-between gap-2 py-1 text-sm">
+                              <span className="min-w-0 text-slate-600">
+                                Deuda del {p.fecha_pactada ?? "—"}
+                                <span className="ml-1 font-medium text-slate-800">
+                                  · S/ {montoPorCobro.toFixed(2)}
+                                </span>
+                              </span>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <button
+                                  className="text-xs text-blue-600 hover:underline"
+                                  onClick={() => setEditarCobro(p)}
+                                >
+                                  Editar fecha
+                                </button>
+                                <button
+                                  className="text-xs text-red-600 hover:underline"
+                                  onClick={() => borrarCobro(p)}
+                                >
+                                  Borrar
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {pagos.some((p) => p.estado === "pagado") && (
+                      <div>
+                        <p className="mb-1 text-xs font-semibold uppercase text-slate-500">Cobros realizados</p>
+                        <div className="space-y-1">
+                          {pagos
+                            .filter((p) => p.estado === "pagado")
+                            .map((p) => (
+                              <div key={p.id} className="flex items-center justify-between py-1 text-sm">
+                                <span className="text-slate-600">
+                                  {p.fecha_pagada ? new Date(p.fecha_pagada + "T12:00:00").toLocaleDateString("es-PE") : ""}
+                                  {" · "}
+                                  {p.metodo_pago ?? ""}
+                                  {p.tipo === "primer_pago" ? " (primer pago)" : ""}
+                                  {p.comprobante ? (
+                                    <a
+                                      href={p.comprobante}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="ml-2 text-xs text-blue-600 hover:underline"
+                                    >
+                                      comprobante
+                                    </a>
+                                  ) : null}
+                                </span>
+                                <span className="font-medium text-emerald-700">
+                                  S/ {Number(p.monto ?? 0).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
+                <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                  <span className="text-slate-600">Deuda pendiente</span>
+                  {deuda > 0 ? (
+                    <span className="font-bold text-red-600">S/ {deuda.toFixed(2)}</span>
+                  ) : (
+                    <span className="font-bold text-emerald-600">Pagado</span>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button className="flex-1" size="sm" onClick={() => setShowPago(true)}>
+                    + Registrar pago
+                  </Button>
+                  <Button className="flex-1" size="sm" variant="secondary" onClick={() => setShowNuevaDeuda(true)}>
+                    + Agregar deuda
+                  </Button>
+                </div>
               </div>
-              <Button className="mt-3" size="sm" variant="secondary" onClick={() => setShowPago(true)}>
-                + Registrar pago
-              </Button>
-            </div>
           </section>
 
           <section
@@ -832,9 +935,31 @@ export default function PedidoDetallePage() {
         <PagoModal
           pedidoId={id}
           deuda={deuda}
+          cobros={pagos.filter((p) => p.estado === "pendiente")}
           onClose={() => setShowPago(false)}
           onDone={() => {
             setShowPago(false);
+            cargar();
+          }}
+        />
+      )}
+      {showNuevaDeuda && (
+        <NuevaDeudaModal
+          pedidoId={id}
+          onClose={() => setShowNuevaDeuda(false)}
+          onDone={() => {
+            setShowNuevaDeuda(false);
+            cargar();
+          }}
+        />
+      )}
+      {editarCobro && (
+        <EditarCobroModal
+          pedidoId={id}
+          cobro={editarCobro}
+          onClose={() => setEditarCobro(null)}
+          onDone={() => {
+            setEditarCobro(null);
             cargar();
           }}
         />
@@ -1618,28 +1743,173 @@ function EditarViajeModal({
 function PagoModal({
   pedidoId,
   deuda,
+  cobros,
   onClose,
   onDone,
 }: {
   pedidoId: string;
   deuda: number;
+  cobros: Pago[];
   onClose: () => void;
   onDone: () => void;
 }) {
   const [monto, setMonto] = useState(deuda.toFixed(2));
   const [metodoPago, setMetodoPago] = useState("yape");
+  const [cobroId, setCobroId] = useState("");
+  const [fechaPago, setFechaPago] = useState("");
+  const [comprobante, setComprobante] = useState("");
+  const [nuevaFechaCobro, setNuevaFechaCobro] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [confirmarSinFecha, setConfirmarSinFecha] = useState(false);
+
+  const montoValor = Number(monto);
+  const cubreTodo = !Number.isNaN(montoValor) && montoValor >= deuda - 0.001;
+  const montoPorCobro = cobros.length > 0 && deuda > 0 ? deuda / cobros.length : 0;
 
   async function registrar() {
     setError(null);
     setLoading(true);
-    const { error } = await api(`/api/pedidos/${pedidoId}/pagos`, {
+    const body: Record<string, unknown> = {
+      monto: Number(monto),
+      metodo_pago: metodoPago,
+      fecha_pagada: fechaPago || undefined,
+      comprobante: comprobante.trim() || undefined,
+    };
+    if (cobroId) body.pago_id = cobroId;
+
+    const { error: err } = await api(`/api/pedidos/${pedidoId}/pagos`, {
       method: "POST",
-      body: JSON.stringify({ monto: Number(monto), metodo_pago: metodoPago }),
+      body: JSON.stringify(body),
     });
     setLoading(false);
-    if (error) setError(error);
+    if (err) {
+      setError(err);
+      return;
+    }
+    if (!cubreTodo && !nuevaFechaCobro) {
+      setConfirmarSinFecha(true);
+      return;
+    }
+    if (!cubreTodo && nuevaFechaCobro) {
+      await api(`/api/pedidos/${pedidoId}/pagos`, {
+        method: "POST",
+        body: JSON.stringify({ estado: "pendiente", fecha_pactada: nuevaFechaCobro }),
+      });
+    }
+    onDone();
+  }
+
+  return (
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        title="Registrar pago"
+        footer={
+          <>
+            <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+            <Button onClick={registrar} disabled={loading}>Guardar</Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          {cobros.length > 0 && (
+            <>
+              <p className="text-xs font-semibold text-slate-500">Cobrar una deuda programada (opcional)</p>
+              <Select value={cobroId} onChange={(e) => setCobroId(e.target.value)}>
+                <option value="">Pago sin vincular a un cobro previo</option>
+                {cobros.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    Deuda del {c.fecha_pactada ?? "—"} · S/ {montoPorCobro.toFixed(2)}
+                  </option>
+                ))}
+              </Select>
+            </>
+          )}
+          <Input label="Monto (S/)" type="number" step="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} />
+          <Select label="Método de pago" value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)}>
+            <option value="yape">Yape</option>
+            <option value="bcp">BCP</option>
+            <option value="interbank">Interbank</option>
+            <option value="bbva">BBVA</option>
+            <option value="scotiabank">Scotiabank</option>
+            <option value="plin">Plin</option>
+            <option value="banco_nacion">Banco de la Nación</option>
+            <option value="tarjeta_link">Tarjeta (Link)</option>
+            <option value="efectivo">Efectivo</option>
+          </Select>
+          <Input label="Fecha de pago" type="date" value={fechaPago} onChange={(e) => setFechaPago(e.target.value)} />
+          <Input
+            label="Comprobante de pago (link Drive)"
+            value={comprobante}
+            onChange={(e) => setComprobante(e.target.value)}
+            placeholder="Pega el link del comprobante"
+          />
+          {!cubreTodo && (
+            <Input
+              label="Fecha del siguiente cobro (opcional)"
+              type="date"
+              value={nuevaFechaCobro}
+              onChange={(e) => setNuevaFechaCobro(e.target.value)}
+            />
+          )}
+          <ErrorBanner message={error} />
+        </div>
+      </Modal>
+
+      {confirmarSinFecha && (
+        <Modal
+          open
+          onClose={() => setConfirmarSinFecha(false)}
+          title="Siguiente cobro sin fecha"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmarSinFecha(false)}>
+                Volver
+              </Button>
+              <Button
+                onClick={() => {
+                  setConfirmarSinFecha(false);
+                  onDone();
+                }}
+              >
+                Continuar
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-slate-700">
+            Te estás yendo sin registrar la fecha del siguiente cobro. ¿Seguro que deseas continuar?
+          </p>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function NuevaDeudaModal({
+  pedidoId,
+  onClose,
+  onDone,
+}: {
+  pedidoId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [fechaPactada, setFechaPactada] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function guardar() {
+    setError(null);
+    setLoading(true);
+    const { error: err } = await api(`/api/pedidos/${pedidoId}/pagos`, {
+      method: "POST",
+      body: JSON.stringify({ estado: "pendiente", fecha_pactada: fechaPactada }),
+    });
+    setLoading(false);
+    if (err) setError(err);
     else onDone();
   }
 
@@ -1647,27 +1917,63 @@ function PagoModal({
     <Modal
       open
       onClose={onClose}
-      title="Registrar pago"
+      title="Agregar deuda (cobro programado)"
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button onClick={registrar} disabled={loading}>Guardar</Button>
+          <Button onClick={guardar} disabled={loading || !fechaPactada}>Guardar</Button>
         </>
       }
     >
       <div className="space-y-3">
-        <Input label="Monto (S/)" type="number" step="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} />
-        <Select label="Método de pago" value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)}>
-          <option value="yape">Yape</option>
-          <option value="bcp">BCP</option>
-          <option value="interbank">Interbank</option>
-          <option value="bbva">BBVA</option>
-          <option value="scotiabank">Scotiabank</option>
-          <option value="plin">Plin</option>
-          <option value="banco_nacion">Banco de la Nación</option>
-          <option value="tarjeta_link">Tarjeta (Link)</option>
-          <option value="efectivo">Efectivo</option>
-        </Select>
+        <Input label="Fecha pactada de cobro" type="date" value={fechaPactada} onChange={(e) => setFechaPactada(e.target.value)} />
+        <ErrorBanner message={error} />
+      </div>
+    </Modal>
+  );
+}
+
+function EditarCobroModal({
+  pedidoId,
+  cobro,
+  onClose,
+  onDone,
+}: {
+  pedidoId: string;
+  cobro: Pago;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [fechaPactada, setFechaPactada] = useState(cobro.fecha_pactada ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function guardar() {
+    setError(null);
+    setLoading(true);
+    const { error: err } = await api(`/api/pedidos/${pedidoId}/pagos/${cobro.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ fecha_pactada: fechaPactada }),
+    });
+    setLoading(false);
+    if (err) setError(err);
+    else onDone();
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Editar fecha de cobro"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button onClick={guardar} disabled={loading || !fechaPactada}>Guardar</Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <Input label="Fecha pactada de cobro" type="date" value={fechaPactada} onChange={(e) => setFechaPactada(e.target.value)} />
         <ErrorBanner message={error} />
       </div>
     </Modal>

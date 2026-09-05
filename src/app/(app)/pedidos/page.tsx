@@ -11,8 +11,8 @@ const ESTADO_BADGE: Record<string, string> = {
   solicitado: "amber",
   confirmado: "blue",
   alistado: "purple",
-  enviado: "amber",
-  entregado: "green",
+  enviado: "greenLight",
+  entregado: "greenStrong",
   esperando_devolucion: "red",
   esperando_cambio: "purple",
   cerrado: "slate",
@@ -52,6 +52,7 @@ type PedidoRow = {
   deuda: number;
   partes_a_pagar: number;
   vendedora_nombre: string | null;
+  retraso: { entrega: boolean; recojo: boolean } | null;
 };
 
 export default function PedidosPage() {
@@ -62,10 +63,14 @@ export default function PedidosPage() {
   const [estado, setEstado] = useState("");
   const [q, setQ] = useState("");
   const [busqueda, setBusqueda] = useState("");
+  const [limite, setLimite] = useState(20);
+  const MAS_POR_VEZ = 20;
 
   const cargar = useCallback(async () => {
     const params = new URLSearchParams();
-    if (estado) params.set("estado", estado);
+    // "retrasado" es un estado visual derivado, no existe en BD: se filtra en el
+    // cliente (backend no puede filtrarlo). No se manda al API.
+    if (estado && estado !== "retrasado") params.set("estado", estado);
     if (busqueda) params.set("q", busqueda);
     const { data, error } = await api<{ pedidos: PedidoRow[] }>(`/api/pedidos?${params}`);
     if (error) setError(error);
@@ -76,6 +81,11 @@ export default function PedidosPage() {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  // Al cambiar filtros, volver a mostrar solo el primer bloque.
+  useEffect(() => {
+    setLimite(MAS_POR_VEZ);
+  }, [estado, busqueda]);
 
   async function confirmar(p: PedidoRow) {
     setError(null);
@@ -99,13 +109,27 @@ export default function PedidosPage() {
     else cargar();
   }
 
+  // "Retrasado" es un estado visual derivado: lo filtramos en el cliente.
+  const visibles =
+    estado === "retrasado"
+      ? pedidos.filter((p) => p.retraso?.entrega || p.retraso?.recojo)
+      : pedidos;
+
+  // Paginación simple en el cliente: primer bloque + "Cargar 20 más".
+  const mostrados = visibles.slice(0, limite);
+
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-800">Pedidos</h1>
-        <Link href="/pedidos/nuevo">
-          <Button>Nuevo pedido</Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/cargos?hoy=1">
+            <Button variant="secondary">Cargos de hoy</Button>
+          </Link>
+          <Link href="/pedidos/nuevo">
+            <Button>Nuevo pedido</Button>
+          </Link>
+        </div>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
@@ -120,6 +144,7 @@ export default function PedidosPage() {
         />
         <Select value={estado} onChange={(e) => setEstado(e.target.value)} className="max-w-[180px]">
           <option value="">Todos los estados</option>
+          <option value="retrasado">Retrasado</option>
           <option value="borrador">Borrador</option>
           <option value="solicitado">Solicitado</option>
           <option value="confirmado">Confirmado</option>
@@ -156,14 +181,14 @@ export default function PedidosPage() {
               </tr>
             </thead>
             <tbody>
-              {pedidos.length === 0 && (
+              {mostrados.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-400">
                     No hay pedidos.
                   </td>
                 </tr>
               )}
-              {pedidos.map((p) => (
+              {mostrados.map((p) => (
                 <tr
                   key={p.id}
                   onClick={() => router.push(`/pedidos/${p.id}`)}
@@ -223,6 +248,13 @@ export default function PedidosPage() {
               ))}
             </tbody>
           </table>
+          {visibles.length > limite && (
+            <div className="border-t border-slate-200 p-3 text-center">
+              <Button variant="secondary" size="sm" onClick={() => setLimite((l) => l + MAS_POR_VEZ)}>
+                Cargar {MAS_POR_VEZ} más ({visibles.length - limite} restantes)
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -274,10 +306,19 @@ function EstadoCell({
   const trans = TRANSICIONES[p.estado] ?? { atras: [], adelante: [] };
   const clickeable = trans.atras.length + trans.adelante.length > 0;
 
+  // "Retrasado" es un estado visual derivado que reemplaza el label real.
+  const retrasoLabel = p.retraso?.entrega
+    ? "Entrega retrasada"
+    : p.retraso?.recojo
+      ? "Recojo retrasado"
+      : null;
+  const estadoLabel = retrasoLabel ?? ESTADO_LABEL[p.estado] ?? p.estado;
+  const estadoColor = retrasoLabel ? "red" : ESTADO_BADGE[p.estado] ?? "slate";
+
   if (!clickeable) {
     return (
-      <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
-        {ESTADO_LABEL[p.estado] ?? p.estado}
+      <Badge color={estadoColor}>
+        {estadoLabel}
       </Badge>
     );
   }
@@ -299,8 +340,8 @@ function EstadoCell({
         title="Cambiar estado"
         className="flex items-center gap-1 rounded-lg hover:bg-slate-100"
       >
-        <Badge color={ESTADO_BADGE[p.estado] ?? "slate"}>
-          {ESTADO_LABEL[p.estado] ?? p.estado}
+        <Badge color={estadoColor}>
+          {estadoLabel}
         </Badge>
         <svg
           viewBox="0 0 24 24"

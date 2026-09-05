@@ -248,30 +248,77 @@ function ConfigPanel() {
   if (loading) return <Spinner />;
 
   return (
-    <section className="max-w-lg rounded-xl border border-slate-200 bg-white p-5">
-      <h2 className="mb-3 text-sm font-semibold text-slate-700">Configuraciones</h2>
-      <div className="space-y-3">
-        <Input
-          label="Empresa de envío por defecto"
-          value={config.empresa_envio_default ?? ""}
-          onChange={(e) => setConfig({ ...config, empresa_envio_default: e.target.value })}
-        />
-        <Input
-          label="Número de WhatsApp de la empresa"
-          value={config.whatsapp_empresa ?? ""}
-          onChange={(e) => setConfig({ ...config, whatsapp_empresa: e.target.value })}
-        />
-        <Input
-          label="Mensaje de confirmación"
-          value={config.mensaje_confirmacion ?? ""}
-          onChange={(e) => setConfig({ ...config, mensaje_confirmacion: e.target.value })}
-        />
+    <div className="max-w-2xl space-y-4">
+      <section className="rounded-xl border border-slate-200 bg-white p-5">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">General</h2>
+        <div className="space-y-3">
+          <Input
+            label="Empresa de envío por defecto"
+            value={config.empresa_envio_default ?? ""}
+            onChange={(e) => setConfig({ ...config, empresa_envio_default: e.target.value })}
+          />
+          <Input
+            label="Número de WhatsApp de la empresa"
+            value={config.whatsapp_empresa ?? ""}
+            onChange={(e) => setConfig({ ...config, whatsapp_empresa: e.target.value })}
+          />
+          <Input
+            label="Mensaje de confirmación"
+            value={config.mensaje_confirmacion ?? ""}
+            onChange={(e) => setConfig({ ...config, mensaje_confirmacion: e.target.value })}
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">Cargos — remitente (dueña)</h2>
+        <div className="space-y-3">
+          <Input
+            label="Nombre completo de la dueña"
+            value={config.cargo_duenia_nombre ?? ""}
+            onChange={(e) => setConfig({ ...config, cargo_duenia_nombre: e.target.value })}
+          />
+          <Input
+            label="DNI"
+            maxLength={8}
+            value={config.cargo_duenia_dni ?? ""}
+            onChange={(e) => setConfig({ ...config, cargo_duenia_dni: e.target.value })}
+          />
+          <Input
+            label="Celular"
+            value={config.cargo_duenia_celular ?? ""}
+            onChange={(e) => setConfig({ ...config, cargo_duenia_celular: e.target.value })}
+          />
+          <Input
+            label="Dirección"
+            value={config.cargo_duenia_direccion ?? ""}
+            onChange={(e) => setConfig({ ...config, cargo_duenia_direccion: e.target.value })}
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">Cargos — encargado de despacho</h2>
+        <div className="space-y-3">
+          <Input
+            label="Nombre del encargado de despacho (almacén)"
+            value={config.cargo_encargado_despacho ?? ""}
+            onChange={(e) => setConfig({ ...config, cargo_encargado_despacho: e.target.value })}
+          />
+        </div>
+      </section>
+
+      <section className="max-w-lg rounded-xl border border-slate-200 bg-white p-5">
         <ErrorBanner message={error} />
-        {msg && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">{msg}</div>}
+        {msg && (
+          <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
+            {msg}
+          </div>
+        )}
         <Button onClick={guardar} disabled={saving}>
           {saving ? "Guardando..." : "Guardar configuración"}
         </Button>
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }

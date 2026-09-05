@@ -3,13 +3,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { Input, Select, Badge, Spinner, ErrorBanner } from "@/components/ui";
+import { Button, Input, Select, Badge, Spinner, ErrorBanner } from "@/components/ui";
 
 const ESTADO_BADGE: Record<string, string> = {
   programado: "slate",
   alistado: "purple",
-  enviado: "amber",
-  terminado: "green",
+  enviado: "greenLight",
+  terminado: "greenStrong",
   cancelado: "red",
 };
 
@@ -36,6 +36,7 @@ type Viaje = {
   codigo: string;
   tipo: string;
   estado: string;
+  retrasado?: boolean;
   fecha: string | null;
   fecha_devolucion: string | null;
   cliente_nombre: string | null;
@@ -60,11 +61,13 @@ function ViajeRow({
   const esHistorial = v.estado === "enviado" || v.estado === "terminado";
   const filaClase = esCancelado
     ? "bg-slate-50 opacity-60"
-    : esHistorial
-      ? "bg-slate-100 opacity-80"
-      : esHoy
-        ? "bg-blue-50"
-        : "";
+    : v.retrasado
+      ? "bg-red-50"
+      : esHistorial
+        ? "bg-slate-100 opacity-80"
+        : esHoy
+          ? "bg-blue-50"
+          : "";
   return (
     <tr
       onClick={onClick}
@@ -114,8 +117,26 @@ function ViajeRow({
   );
 }
 
-function TablaViajes({ viajes, titulo, router, hoy }: { viajes: Viaje[]; titulo: string; router: any; hoy: string }) {
+const MAS_POR_VEZ = 20;
+
+function TablaViajes({
+  viajes,
+  titulo,
+  router,
+  hoy,
+}: {
+  viajes: Viaje[];
+  titulo: string;
+  router: any;
+  hoy: string;
+}) {
+  const [limite, setLimite] = useState(MAS_POR_VEZ);
+  useEffect(() => {
+    setLimite(MAS_POR_VEZ);
+  }, [titulo]);
+
   if (viajes.length === 0) return null;
+  const mostrados = viajes.slice(0, limite);
   return (
     <section className="mb-6">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">{titulo}</h2>
@@ -133,7 +154,7 @@ function TablaViajes({ viajes, titulo, router, hoy }: { viajes: Viaje[]; titulo:
             </tr>
           </thead>
           <tbody>
-            {viajes.map((v) => {
+            {mostrados.map((v) => {
               const esHoy = v.fecha === hoy;
               return (
                 <ViajeRow
@@ -146,6 +167,13 @@ function TablaViajes({ viajes, titulo, router, hoy }: { viajes: Viaje[]; titulo:
             })}
           </tbody>
         </table>
+        {viajes.length > limite && (
+          <div className="border-t border-slate-200 p-3 text-center">
+            <Button variant="secondary" size="sm" onClick={() => setLimite((l) => l + MAS_POR_VEZ)}>
+              Cargar {MAS_POR_VEZ} más ({viajes.length - limite} restantes)
+            </Button>
+          </div>
+        )}
       </div>
     </section>
   );

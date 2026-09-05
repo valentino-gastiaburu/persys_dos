@@ -10,8 +10,8 @@ import { Html5Qrcode } from "html5-qrcode";
 const ESTADO_BADGE: Record<string, string> = {
   programado: "slate",
   alistado: "purple",
-  enviado: "amber",
-  terminado: "green",
+  enviado: "greenLight",
+  terminado: "greenStrong",
 };
 
 type Item = {
@@ -52,6 +52,7 @@ type Viaje = {
   codigo: string;
   tipo: string;
   estado: string;
+  retrasado?: boolean;
   fecha: string | null;
   fecha_devolucion: string | null;
 };
@@ -454,7 +455,13 @@ export default function ViajeDetalle() {
               </Link>
               <span className="text-slate-300">/</span>
               <h1 className="text-2xl font-bold text-slate-800">{viaje.codigo}</h1>
-              <Badge color={ESTADO_BADGE[viaje.estado] ?? "slate"}>{viaje.estado}</Badge>
+              <Badge color={viaje.retrasado ? "red" : ESTADO_BADGE[viaje.estado] ?? "slate"}>
+                {viaje.retrasado
+                  ? viaje.tipo === "recojo"
+                    ? "Recojo retrasado"
+                    : "Entrega retrasada"
+                  : viaje.estado}
+              </Badge>
             </div>
             <p className="mt-1 text-sm text-slate-500">
               Recojo · Pedido {pedidoCodigo ?? "—"} · {clienteNombre ?? "Sin cliente"}
@@ -653,7 +660,13 @@ export default function ViajeDetalle() {
             </Link>
             <span className="text-slate-300">/</span>
             <h1 className="text-2xl font-bold text-slate-800">{viaje.codigo}</h1>
-            <Badge color={ESTADO_BADGE[viaje.estado] ?? "slate"}>{viaje.estado}</Badge>
+            <Badge color={viaje.retrasado ? "red" : ESTADO_BADGE[viaje.estado] ?? "slate"}>
+              {viaje.retrasado
+                ? viaje.tipo === "recojo"
+                  ? "Recojo retrasado"
+                  : "Entrega retrasada"
+                : viaje.estado}
+            </Badge>
           </div>
           <p className="mt-1 text-sm text-slate-500">
             {viaje.tipo === "recojo" ? "Recojo" : "Entrega"} · Pedido {pedidoCodigo ?? "—"} ·{" "}

@@ -12,6 +12,11 @@ body {
 }
 
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+
   body * {
     visibility: hidden;
   }
@@ -24,5 +29,6 @@ body {
     inset: 0;
     overflow: visible;
     padding: 0;
+    width: 100%;
   }
 }

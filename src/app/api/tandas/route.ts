@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { randomCode } from "@/lib/utils";
+import { randomHexCode } from "@/lib/utils";
 
 const ROLES_STOCK = ["almacen", "controller", "admin"];
 const ROLES_LECTURA = ["vendedora", "agendadora", "almacen", "controller", "admin"];
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < cantidad; i++) {
       let qr = "";
       do {
-        qr = randomCode(10);
+        qr = randomHexCode(8);
       } while (usados.has(qr));
       usados.add(qr);
       unidades.push({

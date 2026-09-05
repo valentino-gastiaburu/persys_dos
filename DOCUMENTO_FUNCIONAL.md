@@ -130,8 +130,9 @@
 ### 4.1 Partes a pagar (formulario de nuevo pedido)
 
 - `partes_a_pagar = 1` → en el form solo aparece el desplegable **"¿Pagó? Sí/No"**:
-  - **Sí** → `monto_primer_pago = total` (al confirmar se registra el pago completo).
-  - **No** → `monto_primer_pago = null`.
+  - **Sí** → `monto_primer_pago = total` (al confirmar se registra el cobro completo) y se
+    habilita un campo **"Comprobante de pago"** (link Drive) que queda registrado en Pagos.
+  - **No** → `monto_primer_pago = null` (queda un cobro pendiente con fecha pactada = entrega).
 - `partes_a_pagar > 1` → aparece **"Primer pago (S/)"** y **"Fecha de la parte 2"**
   (guarda en `fecha_siguiente_pago`).
 
@@ -142,14 +143,24 @@
 - Genera `resumen_productos` con formato `IMEI (cant/talla/género)`.
 - Crea el viaje de entrega `programado` (con `fecha`, `direccion`, `costo_envio`
   y `total`) y asigna los detalles al viaje.
-- Si `monto_primer_pago > 0` inserta un pago `tipo = primer_pago`.
+- Genera **un cobro (`pagos`) siempre**: `estado='pendiente'` con `fecha_pactada = fecha_entrega`.
+  - Si `monto_primer_pago > 0`, ese cobro se marca **pagado** (monto, método,
+    fecha_pagada, `tipo='primer_pago'`, y el `comprobante` si se cargó).
+  - Si no, queda pendiente (deuda por cobrar).
 - Guarda `confirmado_el` y registra el cambio en `historial_pedidos`.
 
-### 4.3 Deuda en la tabla de pedidos
+### 4.3 Deuda y cobros programados
 
-- `deuda = monto_total − pagado`.
-- Deuda `0` → **"Pagado"** (verde). Deuda `= total` → **"Todo"** (rojo).
-- Deuda parcial → monto en rojo.
+- **Deuda = `monto_total − Σ cobros pagados`** (los cobros pendientes son deuda pendiente).
+- Deuda `0` → **"Pagado"** (verde). Deuda `= total` → **"Todo"** (rojo). Parcial → monto en rojo.
+- Un cobro `pendiente` es una "deuda" o cobro programado futuro (fecha pactada); al cobrarlo
+  se marca `pagado` con su `fecha_pagada`, `monto`, `método` y `comprobante`.
+- Puede haber **varias deudas** con fechas distintas. Se pueden agregar cobros pendientes
+  nuevos y editar su fecha pactada desde el detalle del pedido.
+- Al registrar un **pago parcial** (que no cubre la deuda), aparece el campo opcional
+  **"Fecha del siguiente cobro"**; si se guarda sin llenarlo, un modal advierte
+  "Te estás yendo sin registrar la fecha del siguiente cobro. ¿Seguro que deseas continuar?"
+  con **Volver / Continuar**.
 
 ### 4.4 Stock: productos únicos y tallas
 
@@ -325,6 +336,34 @@
   no muestra borradores ni pedidos ocultos. El controller ve todos.
 - Columnas: fecha de entrega, código, cliente, N°, resumen, vendedora, total,
   deuda, partes, estado (con acciones de cambio de estado).
+
+### 4.10 Cargos (impresión de documentos por viaje de entrega)
+
+Propósito: imprimir los documentos físicos que acompañan a un viaje de entrega.
+La **unidad es el viaje de entrega** (los de recojo no tienen cargo; los cancelados se
+excluyen). Cada viaje imprime dos documentos A4: **Cargo de Despacho** y **Cargo de Agencia**.
+
+- **Varios cargos se imprimen en una misma hoja** (no es una página por viaje). En el modal
+  de impresión cada viaje usa `break-inside-avoid` para no partirse a la mitad, pero los
+  viajes fluyen juntos.
+- **Cómo llegar:** módulo `/cargos` (filtros desde/hasta, tipo envio/visita, código de viaje,
+  con auto-aplicación y "Quitar filtros"). El botón **"Cargos de hoy"** en la lista de Pedidos
+  lleva al módulo de Cargos con el filtro **desde=hasta=hoy** ya aplicado (la fecha de hoy se
+  resuelve en el servidor; no abre el modal de impresión automáticamente).
+- **Contenido del Cargo de Despacho:** Interno (Cód. Envío = código del viaje, Código del
+  pedido, Ej. Comercial, E. despacho) + Cliente (nombre/DNI/celular) + Información del Pedido
+  (fecha envío, monto, banco, ciudad/distrito, dirección, y regalo/observación) + Productos
+  del pedido (solo los del viaje).
+- **Variante por tipo de pedido:**
+  - **ENVÍO:** "Tipo de Envío: X Menor", muestra Fecha de pago y Empresa, "Ciudad".
+  - **VISITA:** "Mediante: MOTORIZADO", sin Fecha de pago ni Empresa, "Distrito", agrega
+    Regalo y Observación en la información, y en productos `[Entallar a: <talla>]` si hay
+    entalle.
+- **Contenido del Cargo de Agencia:**
+  - **ENVÍO:** Remitente (datos de la dueña desde configuración) + Destinatario (cliente:
+    nombre/DNI/celular/ciudad/dirección/empresa) + productos resumidos + regalo.
+  - **VISITA:** sin remitente (solo Destinatario: nombre/celular/ciudad/dirección) + Fecha
+    Envío + Resumen de Productos + Regalo, con bloque OBS (observaciones).
 
 ---
 

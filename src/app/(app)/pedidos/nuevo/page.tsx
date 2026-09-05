@@ -97,7 +97,9 @@ export default function NuevoPedidoPage() {
   const [pagoInicial, setPagoInicial] = useState("no");
   const [montoPrimerPago, setMontoPrimerPago] = useState("");
   const [fechaPagoParte2, setFechaPagoParte2] = useState("");
+  const [comprobante, setComprobante] = useState("");
   const [observaciones, setObservaciones] = useState("");
+  const [regalo, setRegalo] = useState("");
 
   const [lineas, setLineas] = useState<Linea[]>([]);
   const [prodQ, setProdQ] = useState("");
@@ -333,8 +335,12 @@ export default function NuevoPedidoPage() {
               ? Number(montoPrimerPago)
               : null,
         fecha_siguiente_pago: Number(partes) > 1 ? fechaPagoParte2 || null : null,
+        comprobante:
+          Number(partes) === 1 && pagoInicial === "si" && comprobante.trim()
+            ? comprobante.trim()
+            : null,
         observaciones: observaciones || null,
-        regalo: false,
+        regalo: regalo || null,
         lineas: lineas.map((l) => ({
           producto_id: l.producto_id,
           talla_stock: l.talla_stock,
@@ -561,14 +567,24 @@ export default function NuevoPedidoPage() {
               onChange={(e) => setPartes(e.target.value)}
             />
             {Number(partes) === 1 ? (
-              <Select
-                label="¿Pagó?"
-                value={pagoInicial}
-                onChange={(e) => setPagoInicial(e.target.value)}
-              >
-                <option value="no">No</option>
-                <option value="si">Sí</option>
-              </Select>
+              <>
+                <Select
+                  label="¿Pagó?"
+                  value={pagoInicial}
+                  onChange={(e) => setPagoInicial(e.target.value)}
+                >
+                  <option value="no">No</option>
+                  <option value="si">Sí</option>
+                </Select>
+                {pagoInicial === "si" && (
+                  <Input
+                    label="Comprobante de pago (link Drive)"
+                    value={comprobante}
+                    onChange={(e) => setComprobante(e.target.value)}
+                    placeholder="Pega el link del comprobante (Drive)"
+                  />
+                )}
+              </>
             ) : (
               <>
                 <Input
@@ -591,6 +607,14 @@ export default function NuevoPedidoPage() {
                 label="Observaciones"
                 value={observaciones}
                 onChange={(e) => setObservaciones(e.target.value)}
+              />
+            </div>
+            <div className="md:col-span-3">
+              <Input
+                label="Regalo (descripción)"
+                value={regalo}
+                onChange={(e) => setRegalo(e.target.value)}
+                placeholder="Ej: parante de celular"
               />
             </div>
           </div>

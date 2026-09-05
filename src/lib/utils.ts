@@ -10,6 +10,15 @@ export function randomCode(length = 8): string {
   return code;
 }
 
+// Código QR tipo ID del sistema viejo: 8 hex minúsculas (p. ej. f22beca3).
+export function randomHexCode(length = 8): string {
+  const bytes = new Uint8Array(Math.ceil(length / 2));
+  crypto.getRandomValues(bytes);
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return hex.slice(0, length);
+}
+
 export function formatSoles(n: number | string | null | undefined): string {
   const num = Number(n ?? 0);
   return "S/ " + num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");

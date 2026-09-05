@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { randomCode } from "@/lib/utils";
+import { randomHexCode } from "@/lib/utils";
 
 // POST /api/productos/[id]/stock
 // Entrada manual de stock: producto + talla + cantidad -> crea N productos_unicos con QR.
@@ -46,7 +46,7 @@ export async function POST(
   for (let i = 0; i < cantidad; i++) {
     let qr = "";
     do {
-      qr = randomCode(10);
+      qr = randomHexCode(8);
     } while (usados.has(qr));
     usados.add(qr);
     filas.push({ producto_id: id, talla_id: tallaId, codigo_qr: qr });

@@ -201,6 +201,27 @@ function TablaTipo({
   cols: Talla[];
   vista: "almacen" | "ventas";
 }) {
+  const [tallaSel, setTallaSel] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTallaSel(null);
+  }, [vista]);
+
+  const stockDe = useCallback(
+    (p: Producto, nombre: string) => {
+      const fuente = vista === "ventas" ? p.stock_ventas : p.stock;
+      return fuente?.[tipo]?.[nombre] ?? 0;
+    },
+    [tipo, vista]
+  );
+
+  const renderRows = useMemo(() => {
+    if (!tallaSel) return rows;
+    return [...rows]
+      .filter((p) => stockDe(p, tallaSel) > 0)
+      .sort((a, b) => stockDe(b, tallaSel) - stockDe(a, tallaSel));
+  }, [rows, tallaSel, stockDe]);
+
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
@@ -210,31 +231,55 @@ function TablaTipo({
             {vista === "ventas" ? "· stock ventas" : "· stock almacén"}
           </span>
         </span>
-        <span className="text-xs text-slate-400">{rows.length}</span>
+        <span className="text-xs text-slate-400">
+          {tallaSel
+            ? `Filtro talla ${tallaSel} · ${renderRows.length}`
+            : rows.length}
+        </span>
       </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
             <th className="px-2 py-2">IMEI</th>
-            {cols.map((c) => (
-              <th key={c.id} className="px-1 py-2 text-center">
-                {c.nombre}
-              </th>
-            ))}
+            {cols.map((c) => {
+              const activo = tallaSel === c.nombre;
+              return (
+                <th key={c.id} className="px-1 py-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setTallaSel(activo ? null : c.nombre)}
+                    title={
+                      activo
+                        ? "Quitar filtro de talla"
+                        : "Mostrar solo productos con stock en esta talla"
+                    }
+                    className={`rounded px-2 py-1 uppercase transition-colors ${
+                      activo
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "text-slate-500 hover:bg-slate-200 hover:text-blue-700"
+                    }`}
+                  >
+                    {c.nombre}
+                  </button>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 && (
+          {renderRows.length === 0 && (
             <tr>
               <td
                 colSpan={cols.length + 1}
                 className="px-4 py-10 text-center text-sm text-slate-400"
               >
-                Sin productos de talla {tipo}.
+                {tallaSel
+                  ? `Sin stock en talla ${tallaSel}.`
+                  : `Sin productos de talla ${tipo}.`}
               </td>
             </tr>
           )}
-          {rows.map((p) => (
+          {renderRows.map((p) => (
             <tr key={p.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
               <td className="whitespace-nowrap px-2 py-2 font-mono text-xs text-slate-500">
                 {p.imei}
@@ -251,7 +296,12 @@ function TablaTipo({
                       ? "bg-red-50 text-red-600"
                       : "bg-slate-100 text-slate-400";
                 return (
-                  <td key={c.id} className="px-1 py-2 text-center">
+                  <td
+                    key={c.id}
+                    className={`px-1 py-2 text-center ${
+                      tallaSel === c.nombre ? "bg-blue-50/50" : ""
+                    }`}
+                  >
                     <span
                       className={`inline-flex h-6 w-7 items-center justify-center rounded text-xs font-semibold ${estilo}`}
                     >

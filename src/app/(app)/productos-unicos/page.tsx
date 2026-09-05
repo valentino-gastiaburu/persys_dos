@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { Input, Select, Badge, Spinner, ErrorBanner } from "@/components/ui";
 import TandaForm from "@/components/TandaForm";
 import ImprimirQrs from "@/components/ImprimirQrs";
+import ConteoAlmacen from "@/components/ConteoAlmacen";
 
 const EN_ALMACEN = "En almacén";
 const FUERA_ALMACEN = "Fuera de almacén";
@@ -23,6 +24,7 @@ type ProductoUnico = {
 
 const TABS = [
   { id: "lista", label: "Lista" },
+  { id: "conteo", label: "Conteo" },
   { id: "stock", label: "Añadir stock" },
   { id: "qrs", label: "Imprimir QRs" },
 ] as const;
@@ -51,6 +53,7 @@ export default function ProductosUnicosPage() {
       </div>
 
       {tab === "lista" && <ListaProductosUnicos />}
+      {tab === "conteo" && <ConteoAlmacen />}
       {tab === "stock" && <TandaForm />}
       {tab === "qrs" && <ImprimirQrs />}
     </div>
