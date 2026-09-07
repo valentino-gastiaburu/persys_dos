@@ -283,7 +283,7 @@ export default function ConteoAlmacen() {
                     solvedScanRef.current = { codigo, ts: Date.now() };
                     setPendiente(false);
                     procesar(codigo);
-                  }, 1500),
+                  }, 900),
                 };
                 setPendiente(true);
                 setScanStatus("Sostén el QR y confirmo...");
@@ -381,17 +381,7 @@ export default function ConteoAlmacen() {
 
       const ya = escaneadosRef.current.some((e) => e.codigo === codigo);
       if (ya) {
-        agregar({
-          key: genKey(),
-          codigo,
-          res: "repetido",
-          estado: u.estado,
-          imei: u.imei,
-          nombre: u.nombre,
-          talla: u.talla,
-          when: now,
-        });
-        mostrarFlash("warn", `Ya escaneado: ${u.imei} (${u.talla})`);
+        mostrarFlash("warn", `Ya escaneado (no se agrega): ${u.imei} (${u.talla})`);
         return;
       }
 
@@ -519,96 +509,112 @@ export default function ConteoAlmacen() {
       ) : (
         <>
           {scannerActivo && (
-            <div>
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+              onClick={detenerScanner}
+            >
               <div
-                className={`relative mx-auto max-w-md overflow-hidden rounded-lg border-2 bg-slate-900 transition-colors ${
-                  detectado ? "border-emerald-500" : "border-red-500"
-                }`}
+                className="w-full max-w-md"
+                onClick={(e) => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
               >
-                <div id={scannerDivId} />
-                <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-                  <div className="absolute left-1/2 top-1/2 aspect-square w-[54%] -translate-x-1/2 -translate-y-1/2">
-                    <span
-                      className={`absolute left-0 top-0 h-7 w-7 rounded-tl-lg border-l-4 border-t-4 ${
-                        detectado ? "border-emerald-400" : "border-red-400"
-                      }`}
-                    />
-                    <span
-                      className={`absolute right-0 top-0 h-7 w-7 rounded-tr-lg border-r-4 border-t-4 ${
-                        detectado ? "border-emerald-400" : "border-red-400"
-                      }`}
-                    />
-                    <span
-                      className={`absolute bottom-0 left-0 h-7 w-7 rounded-bl-lg border-b-4 border-l-4 ${
-                        detectado ? "border-emerald-400" : "border-red-400"
-                      }`}
-                    />
-                    <span
-                      className={`absolute bottom-0 right-0 h-7 w-7 rounded-br-lg border-b-4 border-r-4 ${
-                        detectado ? "border-emerald-400" : "border-red-400"
-                      }`}
-                    />
+                <div
+                  className={`relative max-w-md overflow-hidden rounded-lg border-2 bg-slate-900 transition-colors ${
+                    detectado ? "border-emerald-500" : "border-red-500"
+                  }`}
+                >
+                  <div id={scannerDivId} />
+                  <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+                    <div className="absolute left-1/2 top-1/2 aspect-square w-[54%] -translate-x-1/2 -translate-y-1/2">
+                      <span
+                        className={`absolute left-0 top-0 h-7 w-7 rounded-tl-lg border-l-4 border-t-4 ${
+                          detectado ? "border-emerald-400" : "border-red-400"
+                        }`}
+                      />
+                      <span
+                        className={`absolute right-0 top-0 h-7 w-7 rounded-tr-lg border-r-4 border-t-4 ${
+                          detectado ? "border-emerald-400" : "border-red-400"
+                        }`}
+                      />
+                      <span
+                        className={`absolute bottom-0 left-0 h-7 w-7 rounded-bl-lg border-b-4 border-l-4 ${
+                          detectado ? "border-emerald-400" : "border-red-400"
+                        }`}
+                      />
+                      <span
+                        className={`absolute bottom-0 right-0 h-7 w-7 rounded-br-lg border-b-4 border-r-4 ${
+                          detectado ? "border-emerald-400" : "border-red-400"
+                        }`}
+                      />
+                      <div
+                        className="absolute left-2 right-2 h-1 rounded-full bg-amber-400/90"
+                        style={{
+                          animation: "conteo-scan-line 2.4s ease-in-out infinite",
+                          boxShadow: "0 0 10px rgba(251,191,36,0.9)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-600">
                     <div
-                      className="absolute left-2 right-2 h-1 rounded-full bg-amber-400/90"
+                      className="h-full rounded-full bg-emerald-500"
                       style={{
-                        animation: "conteo-scan-line 2.4s ease-in-out infinite",
-                        boxShadow: "0 0 10px rgba(251,191,36,0.9)",
+                        width: pendiente ? "100%" : "0%",
+                        transition: pendiente ? "width 0.9s linear" : "none",
                       }}
                     />
                   </div>
                 </div>
-              </div>
-              <style>{`@keyframes conteo-scan-line { 0% { top: 6%; } 50% { top: 92%; } 100% { top: 6%; } }`}</style>
-              <div className="mx-auto mt-2 max-w-md">
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-                  <div
-                    className="h-full rounded-full bg-emerald-500"
-                    style={{
-                      width: pendiente ? "100%" : "0%",
-                      transition: pendiente ? "width 1.5s linear" : "none",
-                    }}
-                  />
+                <p
+                  className={`mt-2 text-center text-xs font-medium ${
+                    detectado ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
+                  {pendiente
+                    ? "Sostené el QR hasta llenar la barra..."
+                    : detectado
+                      ? "QR procesado. Pasá el siguiente."
+                      : scanStatus ?? "Apunta un QR al cuadro."}
+                </p>
+                <div className="mt-3 flex justify-center">
+                  <button
+                    onClick={detenerScanner}
+                    className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-600"
+                  >
+                    Cerrar cámara
+                  </button>
                 </div>
               </div>
-              <p
-                className={`mt-2 text-center text-xs font-medium ${
-                  detectado ? "text-emerald-600" : "text-red-600"
-                }`}
-              >
-                {pendiente
-                  ? "Sostené el QR hasta llenar la barra..."
-                  : detectado
-                    ? "QR procesado. Pasá el siguiente."
-                    : scanStatus ?? "Escaneando... apunta un QR al cuadro."}
-              </p>
-              <p className="mt-1 text-center text-xs text-slate-500">
-                Mantené el QR quieto hasta que la barra verde se llene (~1,5s); recién ahí se
-                agrega. Si lo movés antes, vuelve a empezar.
-              </p>
             </div>
           )}
+          <style>{`@keyframes conteo-scan-line { 0% { top: 6%; } 50% { top: 92%; } 100% { top: 6%; } }`}</style>
           {camMsg && !scannerActivo && <p className="text-xs text-amber-600">{camMsg}</p>}
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-2 gap-3">
             <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
+              <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Stock que debería estar
                 </span>
-                <span className="text-xs text-slate-400">{pendientes.length} por revisar</span>
+                <span className="text-xs text-slate-400">{pendientes.length} revisar</span>
               </div>
               {pendientes.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-slate-400">
+                <p className="px-3 py-8 text-center text-sm text-slate-400">
                   No queda nada pendiente en stock o la lista está vacía.
                 </p>
               ) : (
-                <ul className="max-h-[32rem] divide-y divide-slate-100 overflow-y-auto">
+                <ul className="max-h-[60vh] divide-y divide-slate-100 overflow-y-auto">
                   {pendientes.map((u) => (
-                    <li key={u.id} className="flex items-center gap-2 px-4 py-1.5 text-sm">
+                    <li key={u.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-1.5 text-sm">
                       <span className="font-mono text-xs text-slate-400">{u.codigo_qr}</span>
                       <span className="font-mono font-medium text-slate-700">{u.imei}</span>
                       <span className="text-slate-500">{u.talla}</span>
-                      <span className="truncate text-xs text-slate-400">{u.nombre}</span>
+                      <span className="hidden truncate text-xs text-slate-400 sm:inline">
+                        {u.nombre}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -616,7 +622,7 @@ export default function ConteoAlmacen() {
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
+              <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Lo que vas escaneando
                 </span>
@@ -624,21 +630,21 @@ export default function ConteoAlmacen() {
               </div>
 
               {escaneados.length === 0 ? (
-                <p className="px-4 py-8 text-center text-sm text-slate-400">
+                <p className="px-3 py-8 text-center text-sm text-slate-400">
                   Aún no escaneas nada.
                 </p>
               ) : (
-                <ul className="max-h-[32rem] divide-y divide-slate-100 overflow-y-auto">
+                <ul className="max-h-[60vh] divide-y divide-slate-100 overflow-y-auto">
                   {rojas.map((e) => (
-                    <li key={e.key} className="border-l-4 border-red-500 bg-red-50/60 px-4 py-2 text-sm">
-                      <div className="flex flex-wrap items-center gap-2">
+                    <li key={e.key} className="border-l-4 border-red-500 bg-red-50/60 px-3 py-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                         <span className="font-semibold text-red-700">
-                          No debería estar en stock: {ESTADO_LABEL[e.estado ?? ""] ?? e.estado}
+                          No debería estar: {ESTADO_LABEL[e.estado ?? ""] ?? e.estado}
                         </span>
                         {e.viaje && (
                           <span className="text-xs text-red-500">
                             Viaje {e.viaje}
-                            {e.pedido && <> · Pedido {e.pedido}</>}
+                            {e.pedido && <> · P {e.pedido}</>}
                           </span>
                         )}
                         <button
@@ -649,21 +655,23 @@ export default function ConteoAlmacen() {
                           quitar
                         </button>
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-red-600">
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-red-600">
                         <span className="font-mono">{e.codigo}</span>
                         <span className="font-mono font-medium">{e.imei ?? ""}</span>
                         <span>{e.talla ?? ""}</span>
-                        <span className="text-red-400">{e.nombre ?? ""}</span>
+                        <span className="hidden text-red-400 sm:inline">{e.nombre ?? ""}</span>
                       </div>
                     </li>
                   ))}
                   {verdes.map((e) => (
-                    <li key={e.key} className="flex items-center gap-2 px-4 py-2 text-sm">
+                    <li key={e.key} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-3 py-1.5 text-sm">
                       <span className="text-emerald-600">✓</span>
                       <span className="font-mono text-xs text-slate-400">{e.codigo}</span>
                       <span className="font-mono font-medium text-slate-700">{e.imei}</span>
                       <span className="text-slate-500">{e.talla}</span>
-                      <span className="truncate text-xs text-slate-400">{e.nombre}</span>
+                      <span className="hidden truncate text-xs text-slate-400 sm:inline">
+                        {e.nombre}
+                      </span>
                       {e.res === "repetido" && (
                         <span className="text-xs font-medium text-amber-600">(repetido)</span>
                       )}
