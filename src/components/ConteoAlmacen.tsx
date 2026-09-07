@@ -19,7 +19,7 @@ type Unidad = {
   viaje: string | null;
 };
 
-type Resultado = "ok" | "fuera" | "repetido";
+type Resultado = "ok" | "fuera";
 
 type Escaneo = {
   key: string;
@@ -63,7 +63,7 @@ function rebuild(list: Escaneo[], mapU: Map<string, Unidad>): Escaneo[] {
     if (u.estado !== "en_almacen") {
       res = "fuera";
     } else if (vistos.has(s.codigo)) {
-      res = "repetido";
+      continue;
     } else {
       vistos.add(s.codigo);
       res = "ok";
@@ -136,8 +136,8 @@ export default function ConteoAlmacen() {
   const verdes = useMemo(
     () =>
       escaneados
-        .filter((e) => e.res === "ok" || e.res === "repetido")
-        .sort((a, b) => Number(a.res === "repetido") - Number(b.res === "repetido")),
+        .filter((e) => e.res === "ok")
+        .sort((a, b) => (a.imei ?? "").localeCompare(b.imei ?? "") || (a.codigo ?? "").localeCompare(b.codigo ?? "")),
     [escaneados]
   );
 
@@ -294,18 +294,24 @@ export default function ConteoAlmacen() {
               const gapOk =
                 lastDecodeRef.current.codigo === pendingScanRef.current?.codigo &&
                 Date.now() - lastDecodeRef.current.ts < 500;
+
               if (pendingScanRef.current && !gapOk) {
                 clearTimeout(pendingScanRef.current.timeout);
                 pendingScanRef.current = null;
                 setPendiente(false);
+                setDetectado(false);
+              } else if (!pendingScanRef.current) {
+                setDetectado(false);
               }
-              setDetectado(false);
+
               frameErrRef.current += 1;
               const now = Date.now();
               if (now - lastStatusSyncRef.current > 800) {
                 lastStatusSyncRef.current = now;
                 setScanStatus(
-                  `Escaneando... aun sin QR detectado (intento ${frameErrRef.current}). Acercá el código, centrado y quieto.`
+                  pendingScanRef.current
+                    ? "Sostén el QR, confirmo..."
+                    : `Escaneando... (intento ${frameErrRef.current}). Acercá el código, centrado y quieto.`
                 );
               }
             }
@@ -381,7 +387,7 @@ export default function ConteoAlmacen() {
 
       const ya = escaneadosRef.current.some((e) => e.codigo === codigo);
       if (ya) {
-        mostrarFlash("warn", `Ya escaneado (no se agrega): ${u.imei} (${u.talla})`);
+        mostrarFlash("warn", `Ya escaneado (no se agrega): ${codigo} — ${u.imei} (${u.talla})`);
         return;
       }
 
@@ -672,9 +678,6 @@ export default function ConteoAlmacen() {
                       <span className="hidden truncate text-xs text-slate-400 sm:inline">
                         {e.nombre}
                       </span>
-                      {e.res === "repetido" && (
-                        <span className="text-xs font-medium text-amber-600">(repetido)</span>
-                      )}
                       <button
                         onClick={() => quitar(e.key)}
                         className="ml-auto text-xs text-slate-400 hover:text-red-600"
