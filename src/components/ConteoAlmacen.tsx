@@ -95,6 +95,7 @@ export default function ConteoAlmacen() {
   const [detectado, setDetectado] = useState(false);
   const [pendiente, setPendiente] = useState(false);
   const [flash, setFlash] = useState<{ tipo: "ok" | "err" | "warn"; texto: string } | null>(null);
+  const [ultimo, setUltimo] = useState<{ tipo: "ok" | "err" | "warn"; texto: string } | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const escaneadosRef = useRef<Escaneo[]>([]);
   const lastScanRef = useRef<{ codigo: string; ts: number }>({ codigo: "", ts: 0 });
@@ -291,21 +292,25 @@ export default function ConteoAlmacen() {
               setDetectado(true);
             },
             () => {
+              const now = Date.now();
               const gapOk =
                 lastDecodeRef.current.codigo === pendingScanRef.current?.codigo &&
-                Date.now() - lastDecodeRef.current.ts < 500;
+                now - lastDecodeRef.current.ts < 700;
 
-              if (pendingScanRef.current && !gapOk) {
+              if (pendingScanRef.current && !gapOk && !solvedScanRef.current.codigo) {
                 clearTimeout(pendingScanRef.current.timeout);
                 pendingScanRef.current = null;
                 setPendiente(false);
                 setDetectado(false);
               } else if (!pendingScanRef.current) {
-                setDetectado(false);
+                const solucionadoReciente =
+                  solvedScanRef.current.codigo && now - solvedScanRef.current.ts < 2500;
+                if (!solucionadoReciente) {
+                  setDetectado(false);
+                }
               }
 
               frameErrRef.current += 1;
-              const now = Date.now();
               if (now - lastStatusSyncRef.current > 800) {
                 lastStatusSyncRef.current = now;
                 setScanStatus(
@@ -352,6 +357,7 @@ export default function ConteoAlmacen() {
 
       const mostrarFlash = (tipo: "ok" | "err" | "warn", texto: string) => {
         setFlash({ tipo, texto });
+        setUltimo({ tipo, texto });
         setTimeout(() => setFlash(null), 1800);
       };
 
@@ -574,6 +580,19 @@ export default function ConteoAlmacen() {
                     />
                   </div>
                 </div>
+                {ultimo && (
+                  <div
+                    className={`mt-2 rounded-lg border px-3 py-2 text-center text-sm font-medium ${
+                      ultimo.tipo === "ok"
+                        ? "border-emerald-400/40 bg-emerald-500/20 text-emerald-300"
+                        : ultimo.tipo === "warn"
+                          ? "border-amber-400/40 bg-amber-500/20 text-amber-300"
+                          : "border-red-400/40 bg-red-500/20 text-red-300"
+                    }`}
+                  >
+                    {ultimo.texto}
+                  </div>
+                )}
                 <p
                   className={`mt-2 text-center text-xs font-medium ${
                     detectado ? "text-emerald-400" : "text-red-400"
