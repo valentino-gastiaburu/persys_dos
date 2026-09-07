@@ -540,24 +540,16 @@ export default function ConteoAlmacen() {
                   <div className="pointer-events-none absolute inset-0" aria-hidden="true">
                     <div className="absolute left-1/2 top-1/2 aspect-square w-[54%] -translate-x-1/2 -translate-y-1/2">
                       <span
-                        className={`absolute left-0 top-0 h-7 w-7 rounded-tl-lg border-l-4 border-t-4 ${
-                          detectado ? "border-emerald-400" : "border-red-400"
-                        }`}
+                        className="absolute left-0 top-0 h-7 w-7 rounded-tl-lg border-l-4 border-t-4 border-emerald-400"
                       />
                       <span
-                        className={`absolute right-0 top-0 h-7 w-7 rounded-tr-lg border-r-4 border-t-4 ${
-                          detectado ? "border-emerald-400" : "border-red-400"
-                        }`}
+                        className="absolute right-0 top-0 h-7 w-7 rounded-tr-lg border-r-4 border-t-4 border-emerald-400"
                       />
                       <span
-                        className={`absolute bottom-0 left-0 h-7 w-7 rounded-bl-lg border-b-4 border-l-4 ${
-                          detectado ? "border-emerald-400" : "border-red-400"
-                        }`}
+                        className="absolute bottom-0 left-0 h-7 w-7 rounded-bl-lg border-b-4 border-l-4 border-emerald-400"
                       />
                       <span
-                        className={`absolute bottom-0 right-0 h-7 w-7 rounded-br-lg border-b-4 border-r-4 ${
-                          detectado ? "border-emerald-400" : "border-red-400"
-                        }`}
+                        className="absolute bottom-0 right-0 h-7 w-7 rounded-br-lg border-b-4 border-r-4 border-emerald-400"
                       />
                       <div
                         className="absolute left-2 right-2 h-1 rounded-full bg-amber-400/90"
