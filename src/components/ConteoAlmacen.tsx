@@ -532,8 +532,8 @@ export default function ConteoAlmacen() {
                 aria-modal="true"
               >
                 <div
-                  className={`relative max-w-md overflow-hidden rounded-lg border-2 bg-slate-900 transition-colors ${
-                    detectado ? "border-emerald-500" : "border-red-500"
+                  className={`relative max-w-md overflow-hidden rounded-lg border-2 bg-slate-900 ${
+                    detectado ? "border-emerald-500" : "border-slate-600"
                   }`}
                 >
                   <div id={scannerDivId} />
