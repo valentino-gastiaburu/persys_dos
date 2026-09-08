@@ -365,11 +365,6 @@ export default function ViajeDetalle() {
     cargar();
   }
 
-  // Guardar y marcar como alistado (atajo)
-  async function guardarYMarcarAlistado() {
-    await guardarCambios();
-  }
-
   async function cambiarEstado(nuevo: string) {
     setMsg(null);
     const { error: err } = await api(`/api/viajes/${id}`, {
@@ -1084,15 +1079,12 @@ export default function ViajeDetalle() {
             onClick={guardarCambios}
             disabled={guardando || (pendientes.length === 0 && eliminados.length === 0)}
           >
-            {guardando ? "Guardando..." : `Guardar cambios${pendientes.length + eliminados.length > 0 ? ` (${pendientes.length}+${eliminados.length})` : ""}`}
+            {guardando ? "Guardando..." : "Alistar"}
           </Button>
-          {viaje.estado === "programado" && (
-            <Button onClick={guardarYMarcarAlistado} disabled={guardando || totalAlistadas === 0}>
-              Guardar y marcar alistado
+          {viaje.estado === "alistado" && !incompleto && pendientes.length === 0 && (
+            <Button variant="success" onClick={() => cambiarEstado("enviado")}>
+              Enviar
             </Button>
-          )}
-          {viaje.estado === "alistado" && (
-            <Button onClick={() => cambiarEstado("enviado")}>Enviar viaje</Button>
           )}
           {viaje.estado === "enviado" && (
             <Button variant="success" onClick={() => cambiarEstado("terminado")}>
