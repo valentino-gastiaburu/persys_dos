@@ -205,49 +205,54 @@ function MenuMovil({
 
       <div className="fixed bottom-5 right-5 z-50 md:hidden">
         {abierto && (
-          <div className="mb-3 flex max-h-[70vh] w-max max-w-[calc(100vw-2.5rem)] flex-col items-end gap-2 overflow-y-auto overscroll-contain py-1 pr-1">
-            <div className="flex items-center gap-2 rounded-full bg-blue-600 py-1 pl-2 pr-4 text-xs font-semibold text-white shadow-lg">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20">
+          <div className="mb-3 flex max-h-[70vh] w-64 max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden overscroll-contain rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">
                 {user.nombre.charAt(0)}
               </span>
-              <span className="max-w-[140px] truncate">{user.nombre}</span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-800">{user.nombre}</p>
+                <p className="text-[11px] capitalize text-slate-400">{user.rol}</p>
+              </div>
             </div>
 
-            {links
-              .filter((l) => l.show !== false)
-              .map((l) => {
-                const active = esActivo(pathname, l.href);
-                return (
-                  <Link
-                    key={l.href}
-                    href={l.href}
-                    onClick={() => setAbierto(false)}
-                    className={`flex items-center gap-2.5 rounded-full border py-2 pl-2 pr-4 text-sm font-semibold shadow-lg transition-transform active:scale-95 ${
-                      active
-                        ? "border-blue-600 bg-blue-600 text-white"
-                        : "border-slate-200 bg-white text-slate-700"
-                    }`}
-                  >
-                    <span
-                      className={`flex h-9 w-9 items-center justify-center rounded-full ${
-                        active ? "bg-white/20" : "bg-blue-50 text-blue-600"
+            <nav className="flex-1 overflow-y-auto overscroll-contain p-2">
+              {links
+                .filter((l) => l.show !== false)
+                .map((l) => {
+                  const active = esActivo(pathname, l.href);
+                  return (
+                    <Link
+                      key={l.href}
+                      href={l.href}
+                      onClick={() => setAbierto(false)}
+                      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors active:scale-[0.98] ${
+                        active
+                          ? "bg-blue-600 text-white"
+                          : "text-slate-700 hover:bg-slate-100"
                       }`}
                     >
-                      <Icono name={l.icon} />
-                    </span>
-                    {l.label}
-                  </Link>
-                );
-              })}
+                      <span
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                          active ? "bg-white/20" : "bg-blue-50 text-blue-600"
+                        }`}
+                      >
+                        <Icono name={l.icon} />
+                      </span>
+                      <span className="truncate">{l.label}</span>
+                    </Link>
+                  );
+                })}
+            </nav>
 
             <button
               onClick={() => {
                 setAbierto(false);
                 logout();
               }}
-              className="flex items-center gap-2.5 rounded-full border border-red-200 bg-white py-2 pl-2 pr-4 text-sm font-semibold text-red-600 shadow-lg active:scale-95"
+              className="flex w-full shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-red-600 transition-colors active:scale-[0.98]"
             >
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-red-50">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50">
                 <Icono name="salir" className="h-4 w-4" />
               </span>
               Cerrar sesión

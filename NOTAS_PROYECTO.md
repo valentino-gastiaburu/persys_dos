@@ -715,4 +715,28 @@ el dinero se completa (marca pagado + fecha_pagada + monto + método + comproban
   descuadres actuales se corrigen modificando stock. ConteoAlmacen se quedó sin cambios.
 - Pendiente: decidir polígono QR estilo Google Lens (reemplazar html5-qrcode por jsQR/@zxing).
 
+## Dashboard en la home (08/sep/2026)
+
+- La home (/) ahora es un **analytics dashboard SOLO para admin/controller**; vendedora/agendadora/
+  almacén siguen viendo la home simple de siempre (5 contadores).
+- **Diferencia pedido vs venta** (regla que pidió la jefa, aplicada en todo el dashboard):
+  - **Pedido = todo lo que se registra** (`creado_el`, cualquier estado) → se usa en pedidos por
+    hora, desglose (registrados→confirmados→cancelados→devueltos→sin confirmar), rendimiento por
+    vendedora y contador de cancelados.
+  - **Venta = pedido confirmado en adelante** (`confirmado_el NOT NULL` y estado en
+    confirmado/alistado/enviado/entregado/cerrado/esperando devolución o cambio) → se usa en la
+    curva de ventas, cantidad vendida, ticket promedio, productos más vendidos, ciudades y canales.
+  - **Pagos = cobros `estado='pagado'`** por `fecha_pagada`. Por eso ventas y pagos tienen desfase
+    natural (pagos en partes) — justo lo que la curva muestra.
+- Endpoint nuevo `GET /api/metricas?desde=&hasta=` (solo controller/admin; default 30 días; máx 400).
+  Agrupa por día/hora en hora de Lima (UTC-5). Responde `kpis`, `series_ventas`, `series_pagos`,
+  `pedidos_por_hora[24]`, `productos`, `ciudades`, `vendedoras` (titular/colab1/colab2/
+  participaciones/monto/ticket), `canales`, `metodos_pago`.
+- UI: **rango de fechas** con presets (Hoy / 7 / 30 / Este mes / Personalizado con inputs date);
+  gráficos con **recharts** (agregado como dependencia): ComposedChart ventas($)+pagos($)+unidades,
+  barras por hora, barras de productos/ciudades/canales/métodos de pago, tabla de vendedoras y
+  desglose de pedidos con barra apilada.
+- Nota: al 08/sep la BD casi no tiene datos (base limpiada el 05/sep, importación de stock
+  pendiente), así que el dashboard se ve casi vacío hasta que haya actividad.
+
 
