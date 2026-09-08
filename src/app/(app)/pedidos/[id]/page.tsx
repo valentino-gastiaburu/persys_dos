@@ -100,6 +100,9 @@ type Pago = {
   fecha_pactada: string | null;
   fecha_pagada: string | null;
   comprobante: string | null;
+  revisado?: boolean;
+  revisado_por?: string | null;
+  revisado_el?: string | null;
 };
 type ViajeLinea = {
   id: string;
@@ -212,6 +215,16 @@ export default function PedidoDetallePage() {
     if (!window.confirm("¿Eliminar este cobro pendiente?")) return;
     setError(null);
     const { error } = await api(`/api/pedidos/${id}/pagos/${cobro.id}`, { method: "DELETE" });
+    if (error) setError(error);
+    else cargar();
+  }
+
+  async function toggleRevisado(cobro: Pago) {
+    setError(null);
+    const { error } = await api(`/api/pedidos/${id}/pagos/${cobro.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ revisado: !cobro.revisado }),
+    });
     if (error) setError(error);
     else cargar();
   }
@@ -399,6 +412,16 @@ export default function PedidoDetallePage() {
               : "Sin cliente"}
           </p>
         </div>
+        {(rol === "controller" || rol === "admin") && (
+          <div className="flex gap-2">
+            <a
+              href={`/bitacora?tab=pedidos&id=${id}`}
+              className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm transition-colors hover:border-blue-500 hover:text-blue-700"
+            >
+              Ver historial
+            </a>
+          </div>
+        )}
         {["borrador", "solicitado"].includes(pedido.estado) && (
           <div className="flex gap-2">
             <Button onClick={confirmar} disabled={confirmando || hayPendientesRetiro}>
@@ -761,6 +784,17 @@ export default function PedidoDetallePage() {
                                       comprobante
                                     </a>
                                   ) : null}
+                                  {["admin", "controller"].includes(rol ?? "") && (
+                                    <label className={`ml-2 inline-flex items-center gap-1 text-xs ${p.revisado ? "text-emerald-700" : "text-amber-600"}`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(p.revisado)}
+                                        onChange={() => toggleRevisado(p)}
+                                        className="h-3.5 w-3.5 rounded"
+                                      />
+                                      {p.revisado ? "Revisado" : "Revisar"}
+                                    </label>
+                                  )}
                                 </span>
                                 <span className="font-medium text-emerald-700">
                                   S/ {Number(p.monto ?? 0).toFixed(2)}

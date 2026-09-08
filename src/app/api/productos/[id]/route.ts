@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria, registrarCambios } from "@/lib/auditoria";
 import {
   syncProductoTallas,
   registrarHistorialProducto,
@@ -117,6 +118,17 @@ export async function PATCH(
     foto_url: producto.foto_url,
     precio_referencial: producto.precio_referencial,
   });
+  await registrarCambios({
+    user,
+    entidad: "producto",
+    entidad_id: producto.id,
+    entidad_ref: producto.imei,
+    accion: "editar",
+    cambios: campos.map((c) => {
+      const f = c === "imagen" ? "foto_url" : c;
+      return { campo: c, anterior: (actual as Record<string, any>)[f], nuevo: (producto as Record<string, any>)[f] };
+    }),
+  });
 
   return Response.json({ producto });
 }
@@ -177,6 +189,14 @@ export async function DELETE(
     tipo_talla: producto.tipo_talla,
     foto_url: producto.foto_url,
     precio_referencial: producto.precio_referencial,
+  });
+  await registrarAuditoria({
+    user,
+    entidad: "producto",
+    entidad_id: producto.id,
+    entidad_ref: producto.imei,
+    accion: "eliminar",
+    nota: `Eliminó el IMEI ${producto.imei} (${producto.nombre})`,
   });
 
   return Response.json({ ok: true });

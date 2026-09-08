@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { generarCodigoPedido, generarResumen, calcularTotal } from "@/lib/pedidos";
 import { validarStockLineas } from "@/lib/productos";
 import { obtenerFechaHoyLima, esRetrasado } from "@/lib/retraso";
@@ -163,8 +164,27 @@ export async function POST(request: NextRequest) {
       await supabase.from("pedidos").delete().eq("id", pedido.id);
       return Response.json({ error: "No se pudo crear el pedido" }, { status: 500 });
     }
+    await registrarAuditoria({
+      user,
+      entidad: "pedido",
+      entidad_id: pedido.id,
+      entidad_ref: pedido.codigo,
+      accion: "crear",
+      valor_nuevo: { estado: "solicitado", lineas: lineasUnicas.length },
+      nota: `Creó el pedido ${pedido.codigo} como solicitado (${lineasUnicas.length} líneas)`,
+    });
     return Response.json({ pedido: solicitado, confirmado: false }, { status: 201 });
   }
+
+  await registrarAuditoria({
+    user,
+    entidad: "pedido",
+    entidad_id: pedido.id,
+    entidad_ref: pedido.codigo,
+    accion: "crear",
+    valor_nuevo: { estado: "borrador", lineas: lineasUnicas.length },
+    nota: `Creó el pedido ${pedido.codigo} como borrador (${lineasUnicas.length} líneas)`,
+  });
 
   return Response.json({ pedido, confirmado: false }, { status: 201 });
 }

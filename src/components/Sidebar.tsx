@@ -42,6 +42,13 @@ const ICONOS: Record<string, React.ReactNode> = {
       <path d="M16 8.5c-.8-1.2-2-1.8-3.5-1.8-1.7 0-3 .8-3 2s1.2 1.8 3.2 2.2c1.8.4 3 1 3 2.2 0 1.3-1.4 2.1-3.2 2.1-1.6 0-2.8-.6-3.6-1.8M12 6v12" />
     </>
   ),
+  bitacora: (
+    <>
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" />
+      <path d="M9 7h7M9 11h7" />
+    </>
+  ),
   almacen: (
     <>
       <path d="M1 3h15v13H1zM16 8h4l3 3v5h-7" />
@@ -81,6 +88,7 @@ export default function Sidebar({ user }: { user: SessionUser }) {
     { href: "/pagos", label: "Pagos", icon: "pagos" },
     { href: "/cargos", label: "Cargos", icon: "cargos" },
     { href: "/almacen", label: "Almacén / Viajes", icon: "almacen", show: esAlmacen },
+    { href: "/bitacora", label: "Bitácora", icon: "bitacora", show: user.rol === "controller" || user.rol === "admin" },
     { href: "/admin", label: "Admin", icon: "admin", show: user.rol === "admin" },
   ];
 

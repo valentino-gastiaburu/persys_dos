@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { api } from "@/lib/api";
+import { api, useSesion } from "@/lib/api";
 import { Input, Select, Badge, Spinner, ErrorBanner } from "@/components/ui";
 import TandaForm from "@/components/TandaForm";
 import ImprimirQrs from "@/components/ImprimirQrs";
@@ -18,6 +18,7 @@ type ProductoUnico = {
   id: string;
   codigo_qr: string;
   estado: string;
+  producto_id: string;
   productos: { imei: string; nombre: string } | null;
   tallas: { nombre: string } | null;
 };
@@ -66,6 +67,8 @@ function ListaProductosUnicos() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [estado, setEstado] = useState("");
+  const { user: sesion } = useSesion();
+  const esAdmin = sesion?.rol === "controller" || sesion?.rol === "admin";
 
   const cargar = useCallback(async () => {
     const { data, error } = await api<{ productos_unicos: ProductoUnico[] }>(
@@ -140,8 +143,32 @@ function ListaProductosUnicos() {
               )}
               {filtrados.map((u) => (
                 <tr key={u.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                  <td className="px-4 py-2 font-mono font-semibold text-blue-700">{u.codigo_qr}</td>
-                  <td className="px-4 py-2 text-slate-700">{u.productos?.imei ?? "—"}</td>
+                  <td className="px-4 py-2">
+                    {esAdmin ? (
+                      <a
+                        href={`/bitacora?tab=unidades&id=${u.id}`}
+                        title="Ver historial de esta unidad"
+                        className="font-mono font-semibold text-blue-700 hover:text-blue-500 hover:underline"
+                      >
+                        {u.codigo_qr}
+                      </a>
+                    ) : (
+                      <span className="font-mono font-semibold text-blue-700">{u.codigo_qr}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-slate-700">
+                    {esAdmin ? (
+                      <a
+                        href={`/bitacora?tab=iet&producto=${u.producto_id}`}
+                        title="Ver historial por IMEI + talla"
+                        className="text-slate-700 hover:text-blue-700 hover:underline"
+                      >
+                        {u.productos?.imei ?? "—"}
+                      </a>
+                    ) : (
+                      u.productos?.imei ?? "—"
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-slate-800">{u.productos?.nombre ?? "—"}</td>
                   <td className="px-4 py-2 text-slate-600">{u.tallas?.nombre ?? "—"}</td>
                   <td className="px-4 py-2">

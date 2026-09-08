@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { calcularTotal, calcularTotalPedido, getDetallesActivos, recalcularTotalViaje } from "@/lib/pedidos";
 import { obtenerFechaHoyLima, esRetrasado } from "@/lib/retraso";
 
@@ -242,7 +243,6 @@ export async function PATCH(
   const { user, error } = await requireRoles(["vendedora", "agendadora", "controller", "admin"]);
   if (error) return error;
   void user;
-
   const { id } = await params;
   const body = await request.json();
   const supabase = getSupabase();
@@ -332,5 +332,25 @@ export async function PATCH(
   if (err || !pedido) {
     return Response.json({ error: "No se pudo actualizar el pedido" }, { status: 500 });
   }
+
+  // Registrar cambios de los campos editables (no totales recalculados).
+  const camposRegistrables = permitidos.filter((c) => updates[c] !== undefined);
+  for (const c of camposRegistrables) {
+    const anterior = (actual as Record<string, any>)[c];
+    const nuevo = updates[c];
+    if (anterior === nuevo) continue;
+    await registrarAuditoria({
+      user,
+      entidad: "pedido",
+      entidad_id: pedido.id,
+      entidad_ref: pedido.codigo,
+      accion: "editar",
+      campo: c,
+      valor_anterior: anterior ?? null,
+      valor_nuevo: nuevo ?? null,
+      nota: `Editó el pedido ${pedido.codigo}`,
+    });
+  }
+
   return Response.json({ pedido });
 }

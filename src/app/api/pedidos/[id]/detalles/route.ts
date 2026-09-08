@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { sincronizarTotalesPedido } from "@/lib/pedidos";
 import { getStockVentasPorTalla } from "@/lib/productos";
 import { recalcularEstadoViaje } from "@/lib/pedidos";
@@ -17,7 +18,7 @@ export async function POST(
   const body = await request.json();
   const supabase = getSupabase();
 
-  const { data: pedido } = await supabase.from("pedidos").select("id, estado").eq("id", id).single();
+  const { data: pedido } = await supabase.from("pedidos").select("id, estado, codigo").eq("id", id).single();
   if (!pedido) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
   const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
   if (!EDITABLES.includes(pedido.estado)) {
@@ -77,6 +78,20 @@ export async function POST(
     }
     const montoTotal = await sincronizarTotalesPedido(id);
     await supabase.from("pedidos").update({ monto_total: montoTotal }).eq("id", id);
+    await registrarAuditoria({
+      user,
+      entidad: "detalle_pedido",
+      entidad_id: existente.id,
+      entidad_ref: pedido.codigo,
+      sub_entidad: "pedido",
+      sub_entidad_id: pedido.id,
+      sub_entidad_ref: pedido.codigo,
+      accion: "editar",
+      campo: "cantidad",
+      valor_anterior: Number(existente.cantidad),
+      valor_nuevo: nuevaCant,
+      nota: `Agregó ${cantidad} más a una línea de ${detalle.productos?.imei ?? ""} (pedido ${pedido.codigo})`,
+    });
     return Response.json({ detalle, monto_total: montoTotal }, { status: 200 });
   }
 
@@ -125,6 +140,19 @@ export async function POST(
   if (viaje) {
     await recalcularEstadoViaje(viaje.id);
   }
+
+  await registrarAuditoria({
+    user,
+    entidad: "detalle_pedido",
+    entidad_id: detalle.id,
+    entidad_ref: pedido.codigo,
+    sub_entidad: "pedido",
+    sub_entidad_id: pedido.id,
+    sub_entidad_ref: pedido.codigo,
+    accion: "crear",
+    valor_nuevo: { producto_id: productoId, cantidad, precio_unitario: precioUnitario, subtotal },
+    nota: `Agregó línea de ${detalle.productos?.imei ?? ""} x${cantidad} (pedido ${pedido.codigo})`,
+  });
 
   return Response.json({ detalle, monto_total: montoTotal }, { status: 201 });
 }

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { sincronizarTotalesPedido } from "@/lib/pedidos";
 import { getStockVentasPorTalla } from "@/lib/productos";
 import { recalcularEstadoViaje } from "@/lib/pedidos";
@@ -19,7 +20,7 @@ export async function PATCH(
   const body = await request.json();
   const supabase = getSupabase();
 
-  const { data: pedido } = await supabase.from("pedidos").select("estado").eq("id", id).single();
+  const { data: pedido } = await supabase.from("pedidos").select("id, estado, codigo").eq("id", id).single();
   const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
   if (!pedido || !EDITABLES.includes(pedido.estado)) {
     return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
@@ -107,6 +108,30 @@ export async function PATCH(
     await recalcularEstadoViaje(detalle.viaje_id);
   }
 
+  const diffs: { campo: string; anterior: unknown; nuevo: unknown }[] = [];
+  for (const key of Object.keys(updates)) {
+    if (key === "subtotal") continue;
+    if ((detalle as Record<string, any>)[key] !== updates[key]) {
+      diffs.push({ campo: key, anterior: (detalle as Record<string, any>)[key], nuevo: updates[key] });
+    }
+  }
+  for (const d of diffs) {
+    await registrarAuditoria({
+      user,
+      entidad: "detalle_pedido",
+      entidad_id: detalleId,
+      entidad_ref: pedido.codigo,
+      sub_entidad: "pedido",
+      sub_entidad_id: pedido.id,
+      sub_entidad_ref: pedido.codigo,
+      accion: "editar",
+      campo: d.campo,
+      valor_anterior: d.anterior ?? null,
+      valor_nuevo: d.nuevo ?? null,
+      nota: `Editó línea de ${actualizado.productos?.imei ?? ""} (pedido ${pedido.codigo})`,
+    });
+  }
+
   return Response.json({ detalle: actualizado, monto_total: montoTotal });
 }
 
@@ -121,7 +146,7 @@ export async function DELETE(
   const { id, detalleId } = await params;
   const supabase = getSupabase();
 
-  const { data: pedido } = await supabase.from("pedidos").select("estado").eq("id", id).single();
+  const { data: pedido } = await supabase.from("pedidos").select("id, estado, codigo").eq("id", id).single();
   const EDITABLES = ["borrador", "solicitado", "confirmado", "alistado"];
   if (!pedido || !EDITABLES.includes(pedido.estado)) {
     return Response.json({ error: "El pedido ya no se puede editar" }, { status: 400 });
@@ -154,6 +179,21 @@ export async function DELETE(
   if (detalle.viaje_id) {
     await recalcularEstadoViaje(detalle.viaje_id);
   }
+
+  await registrarAuditoria({
+    user,
+    entidad: "detalle_pedido",
+    entidad_id: detalleId,
+    entidad_ref: pedido.codigo,
+    sub_entidad: "pedido",
+    sub_entidad_id: pedido.id,
+    sub_entidad_ref: pedido.codigo,
+    accion: "eliminar",
+    campo: "estado",
+    valor_anterior: "activo",
+    valor_nuevo: "oculto",
+    nota: `Quitó línea de ${detalle.producto_id ?? ""} (pedido ${pedido.codigo})`,
+  });
 
   return Response.json({ ok: true, monto_total: montoTotal });
 }

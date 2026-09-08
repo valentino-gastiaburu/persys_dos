@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { recalcularEstadoViaje } from "@/lib/pedidos";
 
 // POST /api/viajes/[id]/alistar/batch
@@ -27,13 +28,16 @@ export async function POST(
 
   const { data: viaje } = await supabase
     .from("viajes")
-    .select("id, pedido_id, estado, tipo")
+    .select("id, pedido_id, estado, tipo, codigo")
     .eq("id", id)
     .single();
   if (!viaje) return Response.json({ error: "Viaje no encontrado" }, { status: 404 });
   if (viaje.estado === "enviado" || viaje.estado === "terminado") {
     return Response.json({ error: "El viaje ya fue enviado o terminado" }, { status: 400 });
   }
+  const pedidoRef = (
+    await supabase.from("pedidos").select("codigo").eq("id", viaje.pedido_id).single()
+  ).data?.codigo ?? viaje.pedido_id;
 
   const esRecojo = viaje.tipo === "recojo";
   const estadoRequerido = esRecojo ? "entregado" : "en_almacen";
@@ -166,6 +170,32 @@ export async function POST(
       })
       .eq("id", unico.id);
 
+    // Kardex por entalle: la unidad sale de la talla original y entra a la nueva
+    if (fueEntallado) {
+      await supabase.from("movimientos_stock").insert([
+        {
+          producto_id: unico.producto_id,
+          talla_id: unico.talla_id,
+          tipo: "salida",
+          cantidad: 1,
+          referencia_tipo: "viaje",
+          referencia_id: id,
+          persona_id: user.id,
+          nota: `Entalle: sale de su talla (${codigoQr})`,
+        },
+        {
+          producto_id: unico.producto_id,
+          talla_id: tallaNueva,
+          tipo: "entrada",
+          cantidad: 1,
+          referencia_tipo: "viaje",
+          referencia_id: id,
+          persona_id: user.id,
+          nota: `Entalle: entra a la talla destino (${codigoQr})`,
+        },
+      ]);
+    }
+
     // Historial
     await supabase.from("historial_producto_unicos").insert({
       producto_unico_id: unico.id,
@@ -192,6 +222,18 @@ export async function POST(
   // Recalcular estado del viaje (alistado si todas cubiertas, inconsistencias si exceso)
   const eraProgramado = viaje.estado === "programado";
   await recalcularEstadoViaje(id);
+
+  if (guardados.length > 0) {
+    await registrarAuditoria({
+      user,
+      entidad: "viaje",
+      entidad_id: id,
+      entidad_ref: viaje.codigo,
+      sub_entidad: "producto_unico",
+      accion: "alistar",
+      nota: `Alistó ${guardados.length} unidad(es) en el viaje ${viaje.codigo} (pedido ${pedidoRef}). Errores: ${errores.length}`,
+    });
+  }
 
   return Response.json({
     guardados,

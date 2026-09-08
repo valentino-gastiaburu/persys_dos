@@ -1,8 +1,31 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export type ApiError = { error: string };
+
+// Rol de la sesión actual (para gatear accesos a historial/conciliación desde el cliente).
+export function useSesion() {
+  const [user, setUser] = useState<{ rol: string; nombre: string; id: string } | null>(null);
+  const [cargado, setCargado] = useState(false);
+  useEffect(() => {
+    let activo = true;
+    (async () => {
+      const { data } = await api<{ user: { rol: string; nombre: string; id: string } }>(
+        "/api/auth/me"
+      );
+      if (activo) {
+        setUser(data?.user ?? null);
+        setCargado(true);
+      }
+    })();
+    return () => {
+      activo = false;
+    };
+  }, []);
+  return { user, cargado };
+}
 
 export async function api<T = any>(
   url: string,

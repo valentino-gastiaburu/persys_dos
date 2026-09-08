@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { api } from "@/lib/api";
+import { api, useSesion } from "@/lib/api";
 import { Button, Input, Spinner, ErrorBanner } from "@/components/ui";
 import { TIPO_TALLA_TIPOS, TIPO_TALLA_LABEL } from "@/lib/productos";
 
@@ -57,6 +57,8 @@ export default function ProductosPage() {
 }
 
 function ListaProductos() {
+  const { user: sesion } = useSesion();
+  const esAdmin = sesion?.rol === "controller" || sesion?.rol === "admin";
   const [productos, setProductos] = useState<Producto[]>([]);
   const [tallas, setTallas] = useState<Talla[]>([]);
   const [loading, setLoading] = useState(true);
@@ -168,13 +170,14 @@ function ListaProductos() {
               rows={enTipo(tipoActivo)}
               cols={tallasPorTipo[tipoActivo] ?? []}
               vista={vista}
+              esAdmin={esAdmin}
             />
           </div>
 
           {/* Desktop: 3 tablas al lado */}
           <div className="hidden gap-4 xl:grid xl:grid-cols-3">
             {TIPOS_TABLA.map((tipo) => (
-              <TablaTipo key={tipo} tipo={tipo} rows={enTipo(tipo)} cols={tallasPorTipo[tipo] ?? []} vista={vista} />
+              <TablaTipo key={tipo} tipo={tipo} rows={enTipo(tipo)} cols={tallasPorTipo[tipo] ?? []} vista={vista} esAdmin={esAdmin} />
             ))}
           </div>
 
@@ -195,11 +198,13 @@ function TablaTipo({
   rows,
   cols,
   vista,
+  esAdmin,
 }: {
   tipo: string;
   rows: Producto[];
   cols: Talla[];
   vista: "almacen" | "ventas";
+  esAdmin: boolean;
 }) {
   const [tallaSel, setTallaSel] = useState<string | null>(null);
 
@@ -282,7 +287,17 @@ function TablaTipo({
           {renderRows.map((p) => (
             <tr key={p.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
               <td className="whitespace-nowrap px-2 py-2 font-mono text-xs text-slate-500">
-                {p.imei}
+                {esAdmin ? (
+                  <a
+                    href={`/bitacora?tab=iet&producto=${p.id}`}
+                    title="Ver historial por IMEI + talla"
+                    className="text-slate-500 hover:text-blue-700 hover:underline"
+                  >
+                    {p.imei}
+                  </a>
+                ) : (
+                  p.imei
+                )}
               </td>
               {cols.map((c) => {
                 const fuente = vista === "ventas" ? p.stock_ventas : p.stock;

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 
 // POST /api/viajes/[id]/retorno-stock
 // Devuelve productos al almacén desde cualquier viaje que tenga unidades pendientes.
@@ -39,7 +40,7 @@ export async function POST(
   if (codigoQr) {
     const { data } = await supabase
       .from("productos_unicos")
-      .select("id, producto_id, talla_id, estado")
+      .select("id, producto_id, talla_id, estado, codigo_qr")
       .eq("codigo_qr", codigoQr)
       .maybeSingle();
     unico = data;
@@ -47,7 +48,7 @@ export async function POST(
     // Búsqueda manual: buscar un producto_unico con el producto+talla que NO esté en_almacen
     const { data } = await supabase
       .from("productos_unicos")
-      .select("id, producto_id, talla_id, estado")
+      .select("id, producto_id, talla_id, estado, codigo_qr")
       .eq("producto_id", body.producto_id)
       .eq("talla_id", body.talla_id)
       .neq("estado", "en_almacen")
@@ -96,11 +97,13 @@ export async function POST(
 
       await supabase.from("movimientos_stock").insert({
         tipo: "entrada",
-        producto_unico_id: unico.id,
         producto_id: unico.producto_id,
+        talla_id: unico.talla_id,
         cantidad: 1,
+        referencia_tipo: "viaje",
+        referencia_id: id,
+        persona_id: user.id,
         nota: `Devolución al stock viaje ${viaje.codigo}`,
-        registrado_por: user.id,
       });
 
       await supabase.from("historial_producto_unicos").insert({
@@ -119,6 +122,21 @@ export async function POST(
         .eq("viaje_id", id)
         .not("estado", "eq", "devuelto")
         .not("estado", "eq", "pendiente");
+
+      await registrarAuditoria({
+        user,
+        entidad: "viaje",
+        entidad_id: id,
+        entidad_ref: viaje.codigo,
+        sub_entidad: "producto_unico",
+        sub_entidad_id: unico.id,
+        sub_entidad_ref: unico.codigo_qr ?? codigoQr ?? null,
+        accion: "devolver_stock",
+        campo: "estado",
+        valor_anterior: unico.estado,
+        valor_nuevo: "en_almacen",
+        nota: `Devolvió ${codigoQr || "producto"} al stock motorizado (viaje ${viaje.codigo})`,
+      });
 
       return Response.json({
         ok: true,
@@ -146,11 +164,13 @@ export async function POST(
   // Kardex: entrada de stock
   await supabase.from("movimientos_stock").insert({
     tipo: "entrada",
-    producto_unico_id: unico.id,
     producto_id: unico.producto_id,
+    talla_id: unico.talla_id,
     cantidad: 1,
+    referencia_tipo: "viaje",
+    referencia_id: id,
+    persona_id: user.id,
     nota: `Devolución al stock viaje ${viaje.codigo}`,
-    registrado_por: user.id,
   });
 
   // Historial del producto único
@@ -171,6 +191,21 @@ export async function POST(
     .eq("viaje_id", id)
     .not("estado", "eq", "devuelto")
     .not("estado", "eq", "pendiente");
+
+  await registrarAuditoria({
+    user,
+    entidad: "viaje",
+    entidad_id: id,
+    entidad_ref: viaje.codigo,
+    sub_entidad: "producto_unico",
+    sub_entidad_id: unico.id,
+    sub_entidad_ref: unico.codigo_qr ?? codigoQr ?? null,
+    accion: "devolver_stock",
+    campo: "estado",
+    valor_anterior: unico.estado,
+    valor_nuevo: "en_almacen",
+    nota: `Devolvió ${codigoQr || "producto"} al stock motorizado (viaje ${viaje.codigo})`,
+  });
 
   return Response.json({
     ok: true,

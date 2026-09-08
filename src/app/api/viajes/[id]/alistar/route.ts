@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { recalcularEstadoViaje } from "@/lib/pedidos";
 
 // POST /api/viajes/[id]/alistar
@@ -23,13 +24,16 @@ export async function POST(
 
   const { data: viaje } = await supabase
     .from("viajes")
-    .select("id, pedido_id, estado, tipo")
+    .select("id, pedido_id, estado, tipo, codigo")
     .eq("id", id)
     .single();
   if (!viaje) return Response.json({ error: "Viaje no encontrado" }, { status: 404 });
   if (viaje.estado === "enviado" || viaje.estado === "terminado") {
     return Response.json({ error: "El viaje ya fue enviado o terminado" }, { status: 400 });
   }
+  const pedidoRef = (
+    await supabase.from("pedidos").select("codigo").eq("id", viaje.pedido_id).single()
+  ).data?.codigo ?? viaje.pedido_id;
 
   // En una entrega se alistan unidades de almacén; en un regreso (recojo) se
   // recogen las unidades que ya fueron entregadas al cliente.
@@ -172,6 +176,32 @@ export async function POST(
     })
     .eq("id", unico.id);
 
+  // Kardex por entalle: la unidad sale de la talla original y entra a la nueva
+  if (fueEntallado) {
+    await supabase.from("movimientos_stock").insert([
+      {
+        producto_id: unico.producto_id,
+        talla_id: unico.talla_id,
+        tipo: "salida",
+        cantidad: 1,
+        referencia_tipo: "viaje",
+        referencia_id: id,
+        persona_id: user.id,
+        nota: `Entalle: sale de su talla (${codigoQr})`,
+      },
+      {
+        producto_id: unico.producto_id,
+        talla_id: tallaNueva,
+        tipo: "entrada",
+        cantidad: 1,
+        referencia_tipo: "viaje",
+        referencia_id: id,
+        persona_id: user.id,
+        nota: `Entalle: entra a la talla destino (${codigoQr})`,
+      },
+    ]);
+  }
+
   await supabase.from("historial_producto_unicos").insert({
     producto_unico_id: unico.id,
     evento: fueEntallado ? "entallado" : "alistado",
@@ -187,6 +217,23 @@ export async function POST(
   });
 
   await recalcularEstadoViaje(id);
+
+  await registrarAuditoria({
+    user,
+    entidad: "viaje",
+    entidad_id: id,
+    entidad_ref: viaje.codigo,
+    sub_entidad: "producto_unico",
+    sub_entidad_id: unico.id,
+    sub_entidad_ref: vpu.productos_unicos?.codigo_qr ?? codigoQr,
+    accion: fueEntallado ? "entallar" : "alistar",
+    campo: "estado",
+    valor_anterior: unico.estado,
+    valor_nuevo: fueEntallado ? "almacen_espera (entallado)" : "almacen_espera",
+    nota: fueEntallado
+      ? `Entalló ${vpu.productos_unicos?.productos?.imei ?? codigoQr} para el viaje ${viaje.codigo} (pedido ${pedidoRef})`
+      : `Alistó ${vpu.productos_unicos?.productos?.imei ?? codigoQr} en el viaje ${viaje.codigo} (pedido ${pedidoRef})`,
+  });
 
   return Response.json({
     vpu,
@@ -216,18 +263,21 @@ export async function DELETE(
 
   const { data: viaje } = await supabase
     .from("viajes")
-    .select("id, estado")
+    .select("id, estado, codigo, pedido_id")
     .eq("id", id)
     .single();
   if (!viaje) return Response.json({ error: "Viaje no encontrado" }, { status: 404 });
   if (viaje.estado === "enviado" || viaje.estado === "terminado") {
     return Response.json({ error: "El viaje ya fue enviado o terminado" }, { status: 400 });
   }
+  const pedidoRef = (
+    await supabase.from("pedidos").select("codigo").eq("id", viaje.pedido_id).single()
+  ).data?.codigo ?? viaje.pedido_id;
 
   // Traer los VPU que pertenecen a este viaje
   const { data: vpus } = await supabase
     .from("viaje_producto_unicos")
-    .select("id, producto_unico_id")
+    .select("id, producto_unico_id, productos_unicos(producto_id, talla_id)")
     .eq("viaje_id", id)
     .in("id", vpuIds);
 
@@ -243,14 +293,20 @@ export async function DELETE(
       .update({ estado: "en_almacen", fecha_salida: null })
       .eq("id", vpu.producto_unico_id);
 
-    // Kardex: salida (se devuelve al stock porque se quitó del viaje)
-    await supabase.from("movimientos_stock").insert({
-      tipo: "salida",
-      producto_unico_id: vpu.producto_unico_id,
-      cantidad: 1,
-      nota: `Producto removido del viaje ${id}`,
-      registrado_por: user.id,
-    });
+    // Kardex: entrada al stock (se quitó del viaje y vuelve al almacén)
+    const u = (vpu.productos_unicos as unknown as { producto_id: string; talla_id: string } | null) ?? null;
+    if (u) {
+      await supabase.from("movimientos_stock").insert({
+        tipo: "entrada",
+        producto_id: u.producto_id,
+        talla_id: u.talla_id,
+        cantidad: 1,
+        referencia_tipo: "viaje",
+        referencia_id: id,
+        persona_id: user.id,
+        nota: `Producto removido del viaje ${viaje.codigo} — devuelto a stock`,
+      });
+    }
 
     // Historial
     await supabase.from("historial_producto_unicos").insert({
@@ -268,6 +324,20 @@ export async function DELETE(
 
   // Recalcular estado del viaje
   await recalcularEstadoViaje(id);
+
+  await registrarAuditoria({
+    user,
+    entidad: "viaje",
+    entidad_id: id,
+    entidad_ref: viaje.codigo,
+    sub_entidad: "producto_unico",
+    sub_entidad_id: vpus[0]?.producto_unico_id,
+    accion: "desalistar",
+    campo: "estado",
+    valor_anterior: "almacen_espera",
+    valor_nuevo: "en_almacen",
+    nota: `Quitó ${eliminados} producto(s) del viaje ${viaje.codigo} (pedido ${pedidoRef})`,
+  });
 
   return Response.json({ eliminados });
 }

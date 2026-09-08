@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import {
   generarCodigoViaje,
   recalcularTotalViaje,
@@ -132,6 +133,20 @@ export async function POST(request: NextRequest) {
 
     const total = await recalcularTotalViaje(viaje.id, "entrega", costoEnvio);
     await refrescarPedido(pedido.id, user.id);
+
+    await registrarAuditoria({
+      user,
+      entidad: "viaje",
+      entidad_id: viaje.id,
+      entidad_ref: viajeCodigo,
+      sub_entidad: "pedido",
+      sub_entidad_id: pedido.id,
+      sub_entidad_ref: pedido.codigo,
+      accion: "crear",
+      valor_nuevo: { tipo: "entrega", fecha: viaje.fecha, costo_envio: costoEnvio, lineas },
+      nota: `Creó viaje de entrega ${viajeCodigo} con ${detalles.length} línea(s) (pedido ${pedido.codigo})`,
+    });
+
     return Response.json({ viaje: { ...viaje, total } }, { status: 201 });
   }
 
@@ -279,6 +294,20 @@ export async function POST(request: NextRequest) {
 
   await recalcularTotalViaje(viaje.id, "recojo", 0);
   await refrescarPedido(pedido.id, user.id);
+
+  await registrarAuditoria({
+    user,
+    entidad: "viaje",
+    entidad_id: viaje.id,
+    entidad_ref: viajeCodigo,
+    sub_entidad: "pedido",
+    sub_entidad_id: pedido.id,
+    sub_entidad_ref: pedido.codigo,
+    accion: "crear",
+    valor_nuevo: { tipo: "recojo", motivo_recojo: motivo, fecha: viaje.fecha, lineas },
+    nota: `Creó viaje de recojo ${viajeCodigo} (${motivo}) con ${lineas.length} línea(s) (pedido ${pedido.codigo})`,
+  });
+
   return Response.json({ viaje }, { status: 201 });
 }
 

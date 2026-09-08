@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 
 // GET /api/pedidos/[id]/pagos
 //   Devuelve los cobros (pagos) de un pedido, con su estado y el total pagado/deuda.
@@ -56,7 +57,7 @@ export async function POST(
   // Verificar el pedido y su deuda (suma solo pagos pagados).
   const { data: pedido } = await supabase
     .from("pedidos")
-    .select("monto_total")
+    .select("id, monto_total, codigo")
     .eq("id", id)
     .single();
   if (!pedido) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
@@ -115,9 +116,27 @@ export async function POST(
 
     // Si el pago cubre toda la deuda, sobran los cobros pendientes: se limpian.
     const deudaRestante = Math.max(0, deudaAntes - monto);
+    let limpiados = 0;
     if (deudaRestante <= 0.001) {
-      await supabase.from("pagos").delete().eq("pedido_id", id).eq("estado", "pendiente");
+      const { error: limpiezaErr } = await supabase
+        .from("pagos").delete().eq("pedido_id", id).eq("estado", "pendiente");
+      if (!limpiezaErr) limpiados = 1;
     }
+
+    await registrarAuditoria({
+      user,
+      entidad: "pago",
+      entidad_id: pago.id,
+      entidad_ref: `PEDIDO ${pedido.codigo}`,
+      sub_entidad: "pedido",
+      sub_entidad_id: pedido.id,
+      sub_entidad_ref: pedido.codigo,
+      accion: "cobrar",
+      campo: "estado",
+      valor_anterior: cobro.estado,
+      valor_nuevo: "pagado",
+      nota: `Cobró S/ ${monto.toFixed(2)} (${body.metodo_pago}) del pedido ${pedido.codigo}${limpiados ? " y liquidó cobros pendientes" : ""}`,
+    });
 
     return Response.json({ pago, deuda_restante: deudaRestante, cobrado: true }, { status: 200 });
   }
@@ -142,6 +161,18 @@ export async function POST(
       .select()
       .single();
     if (err || !pago) return Response.json({ error: "No se pudo crear el cobro" }, { status: 500 });
+    await registrarAuditoria({
+      user,
+      entidad: "pago",
+      entidad_id: pago.id,
+      entidad_ref: `PEDIDO ${pedido.codigo}`,
+      sub_entidad: "pedido",
+      sub_entidad_id: pedido.id,
+      sub_entidad_ref: pedido.codigo,
+      accion: "crear",
+      valor_nuevo: { estado: "pendiente", fecha_pactada: fechaPactada },
+      nota: `Creó cobro pendiente para el ${fechaPactada} (pedido ${pedido.codigo})`,
+    });
     return Response.json({ pago }, { status: 201 });
   }
 
@@ -181,9 +212,25 @@ export async function POST(
 
   // Si el pago cubre toda la deuda, sobran los cobros pendientes: se limpian.
   const deudaRestante = Math.max(0, deudaAntes - monto);
+  let limpiados = 0;
   if (deudaRestante <= 0.001) {
-    await supabase.from("pagos").delete().eq("pedido_id", id).eq("estado", "pendiente");
+    const { error: limpiezaErr } = await supabase
+      .from("pagos").delete().eq("pedido_id", id).eq("estado", "pendiente");
+    if (!limpiezaErr) limpiados = 1;
   }
+
+  await registrarAuditoria({
+    user,
+    entidad: "pago",
+    entidad_id: pago.id,
+    entidad_ref: `PEDIDO ${pedido.codigo}`,
+    sub_entidad: "pedido",
+    sub_entidad_id: pedido.id,
+    sub_entidad_ref: pedido.codigo,
+    accion: "cobrar",
+    valor_nuevo: { estado: "pagado", monto, metodo_pago: body.metodo_pago, fecha_pagada: pago.fecha_pagada },
+    nota: `Registró cobro de S/ ${monto.toFixed(2)} (${body.metodo_pago}) del pedido ${pedido.codigo}${limpiados ? " y liquidó cobros pendientes" : ""}`,
+  });
 
   return Response.json({ pago, deuda_restante: deudaRestante, cobrado: true }, { status: 201 });
 }

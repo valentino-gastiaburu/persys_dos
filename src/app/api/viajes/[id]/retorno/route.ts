@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { syncEstadoPedidoPorViajes } from "@/lib/pedidos";
 
 // Marca el viaje de recojo como terminado (devolución completa) y sincroniza
@@ -36,7 +37,7 @@ export async function POST(
   // Verificar que el viaje existe y es de recojo
   const { data: viaje } = await supabase
     .from("viajes")
-    .select("id, pedido_id, estado, tipo")
+    .select("id, pedido_id, estado, tipo, codigo")
     .eq("id", id)
     .single();
   if (!viaje) return Response.json({ error: "Viaje no encontrado" }, { status: 404 });
@@ -46,6 +47,9 @@ export async function POST(
   if (viaje.estado === "terminado" || viaje.estado === "cancelado") {
     return Response.json({ error: "El viaje ya fue terminado o cancelado" }, { status: 400 });
   }
+  const pedidoRef = (
+    await supabase.from("pedidos").select("codigo").eq("id", viaje.pedido_id).single()
+  ).data?.codigo ?? viaje.pedido_id;
 
   // Buscar el producto único por QR
   const { data: unico } = await supabase
@@ -96,11 +100,13 @@ export async function POST(
 
       await supabase.from("movimientos_stock").insert({
         tipo: "entrada",
-        producto_unico_id: unico.id,
         producto_id: unico.producto_id,
+        talla_id: unico.talla_id,
         cantidad: 1,
-        nota: `Devolución registrada viaje ${viaje.id}`,
-        registrado_por: user.id,
+        referencia_tipo: "viaje",
+        referencia_id: id,
+        persona_id: user.id,
+        nota: `Devolución registrada viaje ${viaje.codigo}`,
       });
 
       await supabase.from("historial_producto_unicos").insert({
@@ -121,6 +127,21 @@ export async function POST(
 
       const completado = (pendientesRestantes ?? 0) === 0;
       if (completado) await finalizarRecojo(supabase, viaje);
+
+      await registrarAuditoria({
+        user,
+        entidad: "viaje",
+        entidad_id: id,
+        entidad_ref: viaje.codigo,
+        sub_entidad: "producto_unico",
+        sub_entidad_id: unico.id,
+        sub_entidad_ref: codigoQr,
+        accion: "devolver",
+        campo: "estado",
+        valor_anterior: "entregado",
+        valor_nuevo: "en_almacen",
+        nota: `Registró devolución de ${codigoQr} en el recojo ${viaje.codigo} (pedido ${pedidoRef})${completado ? " — recojo completado" : ""}`,
+      });
 
       return Response.json({
         ok: true,
@@ -149,11 +170,13 @@ export async function POST(
   // Kardex: entrada de stock
   await supabase.from("movimientos_stock").insert({
     tipo: "entrada",
-    producto_unico_id: unico.id,
     producto_id: unico.producto_id,
+    talla_id: unico.talla_id,
     cantidad: 1,
-    nota: `Devolución registrada viaje ${viaje.id}`,
-    registrado_por: user.id,
+    referencia_tipo: "viaje",
+    referencia_id: id,
+    persona_id: user.id,
+    nota: `Devolución registrada viaje ${viaje.codigo}`,
   });
 
   // Historial del producto único
@@ -177,6 +200,21 @@ export async function POST(
   const completado = (pendientesRestantes ?? 0) === 0;
 
   if (completado) await finalizarRecojo(supabase, viaje);
+
+  await registrarAuditoria({
+    user,
+    entidad: "viaje",
+    entidad_id: id,
+    entidad_ref: viaje.codigo,
+    sub_entidad: "producto_unico",
+    sub_entidad_id: unico.id,
+    sub_entidad_ref: codigoQr,
+    accion: "devolver",
+    campo: "estado",
+    valor_anterior: "entregado",
+    valor_nuevo: "en_almacen",
+    nota: `Registró devolución de ${codigoQr} en el recojo ${viaje.codigo} (pedido ${pedidoRef})${completado ? " — recojo completado" : ""}`,
+  });
 
   return Response.json({
     ok: true,

@@ -22,6 +22,14 @@ type Cobro = {
   monto: number | null;
   metodo_pago: string | null;
   comprobante: string | null;
+  revisado?: boolean;
+};
+
+type CobroGlobal = Cobro & {
+  pedido_id?: string | null;
+  pedido_codigo?: string | null;
+  pedido_estado?: string | null;
+  cliente_nombre?: string | null;
 };
 
 export default function PagosPage() {
@@ -30,6 +38,9 @@ export default function PagosPage() {
   const [error, setError] = useState<string | null>(null);
   const [soloDeuda, setSoloDeuda] = useState(true);
   const [pagar, setPagar] = useState<PedidoRow | null>(null);
+  const [rol, setRol] = useState<string | null>(null);
+  const [porRevisar, setPorRevisar] = useState<CobroGlobal[]>([]);
+  const [puedeRevisar, setPuedeRevisar] = useState(false);
 
   const cargar = useCallback(async () => {
     const params = new URLSearchParams();
@@ -43,6 +54,35 @@ export default function PagosPage() {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  useEffect(() => {
+    api<{ user: { rol: string } }>("/api/auth/me").then(({ data }) => {
+      setRol(data?.user?.rol ?? null);
+    });
+  }, []);
+
+  const revisable = rol != null && ["admin", "controller"].includes(rol);
+
+  const cargarRevisados = useCallback(async () => {
+    const { data } = await api<{ cobros: CobroGlobal[]; puede_revisar: boolean }>(
+      "/api/pagos?estado=pagado&solo_sin_revisar=1&limite=100"
+    );
+    setPorRevisar(data?.cobros ?? []);
+    setPuedeRevisar(Boolean(data?.puede_revisar));
+  }, []);
+
+  useEffect(() => {
+    if (revisable) cargarRevisados();
+  }, [revisable, cargarRevisados]);
+
+  async function toggleRevisar(cobro: CobroGlobal) {
+    if (!cobro.pedido_id) return;
+    await api(`/api/pedidos/${cobro.pedido_id}/pagos/${cobro.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ revisado: !cobro.revisado }),
+    });
+    cargarRevisados();
+  }
 
   return (
     <div>
@@ -59,6 +99,55 @@ export default function PagosPage() {
         </label>
       </div>
       <ErrorBanner message={error} />
+
+      {revisable && (
+        <section className="mb-6 overflow-hidden rounded-xl border border-slate-300 bg-white">
+          <div className="flex items-center gap-2 border-b border-slate-200 bg-amber-50 px-5 py-3">
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+            <h2 className="flex-1 text-sm font-semibold text-slate-800">
+              Cobros por revisar
+              {porRevisar.length > 0 && (
+                <span className="ml-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">
+                  {porRevisar.length}
+                </span>
+              )}
+            </h2>
+            <span className="text-xs text-slate-400">{puedeRevisar ? "Marca el cobro para confirmar que se recibió" : ""}</span>
+          </div>
+          <div className="max-h-80 overflow-y-auto p-4">
+            {porRevisar.length === 0 ? (
+              <p className="py-4 text-center text-sm text-slate-400">Sin cobros pendientes de revisión.</p>
+            ) : (
+              <div className="space-y-1">
+                {porRevisar.map((c) => (
+                  <div key={c.id} className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(c.revisado)}
+                      onChange={() => toggleRevisar(c)}
+                      className="h-4 w-4 rounded"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-slate-800">
+                        {c.cliente_nombre ?? "Sin cliente"}
+                        {c.pedido_codigo && (
+                          <Link href={`/pedidos/${c.pedido_id}`} className="ml-2 text-xs text-blue-600 hover:underline">
+                            {c.pedido_codigo}
+                          </Link>
+                        )}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {c.metodo_pago ?? "—"} · {c.fecha_pagada ?? c.fecha_pactada ?? ""}
+                      </p>
+                    </div>
+                    <span className="font-semibold text-emerald-700">S/ {Number(c.monto ?? 0).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {loading ? (
         <Spinner />

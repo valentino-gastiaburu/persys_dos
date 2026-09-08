@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 
 export async function POST(
   request: NextRequest,
@@ -21,7 +22,7 @@ export async function POST(
     // 1. Obtener el pedido actual
     const { data: pedido, error: pedErr } = await supabase
       .from("pedidos")
-      .select("id, estado")
+      .select("id, estado, codigo")
       .eq("id", id)
       .single();
 
@@ -51,18 +52,23 @@ export async function POST(
 
     // 4. Obtener unidades alistadas en esos viajes
     const viajeIds = (viajes ?? []).map((v) => v.id);
-    let unidadesAlistadas: { producto_unico_id: string }[] = [];
+    let vpusPedido: {
+      producto_unico_id: string;
+      estado: string;
+      productos_unicos: { producto_id: string; talla_id: string }[] | null;
+    }[] = [];
     if (viajeIds.length > 0) {
       const { data: vpus } = await supabase
         .from("viaje_producto_unicos")
-        .select("producto_unico_id")
+        .select("producto_unico_id, estado, productos_unicos(producto_id, talla_id)")
         .in("viaje_id", viajeIds);
-      unidadesAlistadas = vpus ?? [];
+      vpusPedido = (vpus ?? []) as typeof vpusPedido;
     }
 
     // 5. Devolver unidades al stock y marcar VPUs como devueltos
-    if (unidadesAlistadas.length > 0) {
-      const updates = unidadesAlistadas.map((vpu) =>
+    const unidadesADevolver = vpusPedido.filter((v) => v.estado !== "devuelto");
+    if (unidadesADevolver.length > 0) {
+      const updates = unidadesADevolver.map((vpu) =>
         supabase
           .from("productos_unicos")
           .update({ estado: "en_almacen" })
@@ -70,8 +76,26 @@ export async function POST(
       );
       await Promise.all(updates);
 
-      // Marcar VPUs como devueltos para que no aparezcan en "Pendientes a regresar"
-      const viajeIdsSet = new Set(viajeIds);
+      // Kardex: entrada al stock por cada unidad devuelta al cancelar el pedido
+      const kardex = unidadesADevolver.flatMap((v) => v.productos_unicos ?? []);
+      if (kardex.length > 0) {
+        await supabase.from("movimientos_stock").insert(
+          kardex.map((u) => ({
+            tipo: "entrada" as const,
+            producto_id: u.producto_id,
+            talla_id: u.talla_id,
+            cantidad: 1,
+            referencia_tipo: "pedido" as const,
+            referencia_id: id,
+            persona_id: user.id,
+            nota: `Pedido ${pedido.codigo} cancelado — unidad devuelta a stock`,
+          }))
+        );
+      }
+    }
+
+    // Marcar VPUs como devueltos para que no aparezcan en "Pendientes a regresar"
+    if (viajeIds.length > 0) {
       await supabase
         .from("viaje_producto_unicos")
         .update({ estado: "devuelto" })
@@ -105,6 +129,17 @@ export async function POST(
     }
 
     // 8. El trigger 11 (en BD) insertará la inconsistencia correspondiente
+    await registrarAuditoria({
+      user,
+      entidad: "pedido",
+      entidad_id: id,
+      entidad_ref: pedido.codigo,
+      accion: "cancelar",
+      campo: "estado",
+      valor_anterior: pedido.estado,
+      valor_nuevo: "cancelado",
+      nota: `Canceló el pedido ${pedido.codigo} y devolvió ${unidadesADevolver.length} unidades a stock`,
+    });
 
     return new Response(
       JSON.stringify({

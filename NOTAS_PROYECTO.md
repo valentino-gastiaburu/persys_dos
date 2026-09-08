@@ -1,7 +1,7 @@
 # Persys_dos — Contexto del proyecto
 
 > Bitácora resumida: decisiones del usuario, respuestas a preguntas y estado actual.
-> Última actualización: 20/ago/2026.
+> Última actualización: 08/sep/2026.
 
 ## Qué es Persys_dos
 
@@ -685,5 +685,34 @@ el dinero se completa (marca pagado + fecha_pagada + monto + método + comproban
   `viaje_producto_unicos` (última asignación por `fecha_alistado`).
 - Sesión auto-guardada en localStorage (`persys:conteo`, v2 de formato); al recargar se
   reconcilia contra el snapshot actual. Sin cambios de BD.
+
+
+## Conciliación / Trazabilidad de stock (07-08/sep/2026)
+
+- Bitácora unificada en `/bitacora` (solo controller/admin), con 4 pestañas:
+  - **General**: historial de todos los cambios (eventos, estados, ediciones).
+  - **Productos únicos**: historial por unidad (QR). Busca por QR (manual o escaneado) o IMEI.
+  - **Pedidos**: trazabilidad completa de un pedido (estados, viajes, auditoría, movimientos stock, VPU).
+  - **IMEI + Talla**: stock/movimientos por producto+talla con conteos por estado y lista de entalles.
+- Deep links desde: IMEI en `/productos` y `/productos-unicos`, QR en `/productos-unicos` y
+  botón "Ver historial" en `/pedidos/[id]`. URL: `/bitacora?tab=...&id|producto|qr=...`.
+- **Pagos revisados**: pagos tienen checkbox "revisado" (solo admin/controller); el cambio se
+  registra en auditoría. Migraciones `21_auditoria.sql` y `22_pagos_revisados.sql` aplicadas
+  por el usuario en el SQL Editor.
+- **Auditoría central**: tabla `auditoria` + enums en `supabase/02_schema.sql`; logs en pedidos,
+  viajes, pagos, productos, usuarios, producto_unicos.
+- **Fixes de kardex (`movimientos_stock`)** — escritores que fallaban en silencio:
+  - `viajes/[id]/alistar` DELETE: ahora registra **entrada** válida (columnas correctas); el
+    alistar inserta **salida** por VPU + **entalle** (salida talla A + entrada talla B).
+  - `viajes/[id]/retorno` y `retorno-stock`: inserts corregidos (entrada, `talla_id`, `persona_id`).
+  - `alistar/batch`: entalle con kardex salida/entrada.
+  - `pedidos/[id]/cancelar`: kardex **entrada** por unidad devuelta al cancelar el pedido.
+  - (`retorno` y `cancelar` también corrigen `historial_producto_unicos` cuando aplica.)
+- APIs nuevas (admin/controller): `GET /api/historial/unidades/[id]`, `GET /api/historial/pedidos/[id]`,
+  `GET /api/historial/productos/[productoId]?talla_id=`.
+- Objetivo: detectar/reconstruir **descuadres físicos** (devoluciones/cambios no registrados)
+  tras el Conteo. **Sin backfill histórico**: solo se ven los movimientos hacia adelante; los
+  descuadres actuales se corrigen modificando stock. ConteoAlmacen se quedó sin cambios.
+- Pendiente: decidir polígono QR estilo Google Lens (reemplazar html5-qrcode por jsQR/@zxing).
 
 

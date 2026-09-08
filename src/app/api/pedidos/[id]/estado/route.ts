@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { registrarHistorialPedido, tienePendientesRetiro } from "@/lib/pedidos";
 
 // Transiciones manuales de estado del pedido.
@@ -119,6 +120,17 @@ export async function POST(
     estado_nuevo: nuevoEstado,
     persona_id: user.id,
     motivo: "Cambio de estado manual",
+  });
+  await registrarAuditoria({
+    user,
+    entidad: "pedido",
+    entidad_id: id,
+    entidad_ref: actualizado.codigo,
+    accion: "cambiar_estado",
+    campo: "estado",
+    valor_anterior: pedido.estado,
+    valor_nuevo: nuevoEstado,
+    nota: "Cambio de estado manual",
   });
 
   return Response.json({ pedido: actualizado });

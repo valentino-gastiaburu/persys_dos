@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import {
   syncProductoTallas,
   registrarHistorialProducto,
@@ -70,6 +71,14 @@ export async function POST(request: NextRequest) {
     tipo_talla: producto.tipo_talla,
     foto_url: producto.foto_url,
     precio_referencial: producto.precio_referencial,
+  });
+  await registrarAuditoria({
+    user,
+    entidad: "producto",
+    entidad_id: producto.id,
+    entidad_ref: producto.imei,
+    accion: "crear",
+    nota: `Creó el IMEI ${producto.imei} (${producto.nombre})`,
   });
 
   return Response.json({ producto }, { status: 201 });

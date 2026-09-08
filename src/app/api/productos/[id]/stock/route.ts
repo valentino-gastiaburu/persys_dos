@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { randomHexCode } from "@/lib/utils";
 
 // POST /api/productos/[id]/stock
@@ -26,7 +27,7 @@ export async function POST(
 
   const { data: producto } = await supabase
     .from("productos")
-    .select("id")
+    .select("id, imei")
     .eq("id", id)
     .maybeSingle();
   if (!producto) return Response.json({ error: "Producto no encontrado" }, { status: 404 });
@@ -81,6 +82,16 @@ export async function POST(
       nota: "Ingreso por entrada manual",
     }))
   );
+
+  await registrarAuditoria({
+    user,
+    entidad: "producto",
+    entidad_id: id,
+    entidad_ref: producto.imei,
+    accion: "ingresar_stock",
+    valor_nuevo: { cantidad, talla_id: tallaId },
+    nota: `Ingresó ${cantidad} unidades a stock`,
+  });
 
   return Response.json({
     creados: creados.length,

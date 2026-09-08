@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
+import { registrarAuditoria } from "@/lib/auditoria";
 import { registrarHistorialPedido, syncEstadoPedidoPorViajes, recalcularTotalViaje, sincronizarTotalesPedido, recalcularEstadoViaje } from "@/lib/pedidos";
 import { obtenerFechaHoyLima, esRetrasado } from "@/lib/retraso";
 
@@ -115,10 +116,17 @@ export async function PATCH(
 
   const { data: viaje } = await supabase
     .from("viajes")
-    .select("id, pedido_id, estado, tipo, costo_envio")
+    .select("id, pedido_id, estado, tipo, costo_envio, codigo")
     .eq("id", id)
     .single();
   if (!viaje) return Response.json({ error: "Viaje no encontrado" }, { status: 404 });
+
+  const { data: pedido } = await supabase
+    .from("pedidos")
+    .select("codigo")
+    .eq("id", viaje.pedido_id)
+    .single();
+  const pedidoCodigo = pedido?.codigo ?? viaje.pedido_id;
 
   const esActivo = viaje.estado === "programado" || viaje.estado === "alistado";
 
@@ -222,6 +230,21 @@ export async function PATCH(
         motivo: `Cancelación de viaje ${viaje.tipo === "recojo" ? "de recojo" : "de entrega"}`,
       });
     }
+
+    await registrarAuditoria({
+      user,
+      entidad: "viaje",
+      entidad_id: id,
+      entidad_ref: viaje.codigo,
+      sub_entidad: "pedido",
+      sub_entidad_id: viaje.pedido_id,
+      sub_entidad_ref: pedidoCodigo,
+      accion: "cancelar",
+      campo: "estado",
+      valor_anterior: viaje.estado,
+      valor_nuevo: "cancelado",
+      nota: `Canceló el viaje ${viaje.codigo} (${viaje.tipo}) del pedido ${pedidoCodigo}`,
+    });
 
     return Response.json({ ok: true });
   }
@@ -404,6 +427,21 @@ export async function PATCH(
         motivo: `Estado del viaje cambiado a ${nuevoEstado}`,
       });
     }
+
+    await registrarAuditoria({
+      user,
+      entidad: "viaje",
+      entidad_id: id,
+      entidad_ref: viaje.codigo,
+      sub_entidad: "pedido",
+      sub_entidad_id: viaje.pedido_id,
+      sub_entidad_ref: pedidoCodigo,
+      accion: "cambiar_estado",
+      campo: "estado",
+      valor_anterior: viaje.estado,
+      valor_nuevo: nuevoEstado,
+      nota: `Marcó el viaje ${viaje.codigo} como ${nuevoEstado} (pedido ${pedidoCodigo})`,
+    });
 
     return Response.json({ viaje: viajeActualizado, pedido: pedidoActualizado });
   }
@@ -773,6 +811,28 @@ export async function PATCH(
 
     await recalcularTotalViaje(id, viaje.tipo, 0);
     await sincronizarTotalesPedido(viaje.pedido_id);
+  }
+
+  const camposEditados: string[] = [];
+  if (body.fecha !== undefined) camposEditados.push("fecha");
+  if (body.direccion !== undefined) camposEditados.push("direccion");
+  if (body.lineas !== undefined) camposEditados.push("lineas");
+  if (body.recojo_lineas !== undefined) camposEditados.push("recojo_lineas");
+  if (camposEditados.length > 0) {
+    await registrarAuditoria({
+      user,
+      entidad: "viaje",
+      entidad_id: id,
+      entidad_ref: viaje.codigo,
+      sub_entidad: "pedido",
+      sub_entidad_id: viaje.pedido_id,
+      sub_entidad_ref: pedidoCodigo,
+      accion: "editar",
+      campo: camposEditados.join("+"),
+      valor_anterior: null,
+      valor_nuevo: null,
+      nota: `Editó el viaje ${viaje.codigo}: ${camposEditados.join(", ")} (pedido ${pedidoCodigo})`,
+    });
   }
 
   const { data: viajeFinal } = await supabase.from("viajes").select("*").eq("id", id).single();
