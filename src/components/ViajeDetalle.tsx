@@ -99,6 +99,7 @@ export default function ViajeDetalle() {
   // Scanner de cámara
   const [scannerActivo, setScannerActivo] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const procesandoRetornoRef = useRef(false);
   const scannerDivId = "qr-scanner";
 
   // Búsqueda manual por texto
@@ -424,25 +425,39 @@ export default function ViajeDetalle() {
       cargar();
     }
 
-    async function iniciarScannerRetorno() {
+    function iniciarScannerRetorno() {
       setScannerActivo(true);
       setMsg(null);
-      try {
-        const scanner = new Html5Qrcode(scannerDivId);
-        scannerRef.current = scanner;
-        await scanner.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          (decodedText) => {
-            escanearRetorno(decodedText);
-            detenerScanner();
-          },
-          () => {}
-        );
-      } catch {
-        setScannerActivo(false);
-        setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos del navegador o usa el botón 'Recoger' de cada producto para registrarlo manualmente." });
-      }
+
+      // Esperar al siguiente render para que el div exista en el DOM
+      setTimeout(() => {
+        try {
+          const scanner = new Html5Qrcode(scannerDivId);
+          scannerRef.current = scanner;
+          scanner
+            .start(
+              { facingMode: "environment" },
+              { fps: 10, qrbox: { width: 250, height: 250 } },
+              (decodedText) => {
+                if (!procesandoRetornoRef.current) {
+                  procesandoRetornoRef.current = true;
+                  escanearRetorno(decodedText).finally(() => {
+                    procesandoRetornoRef.current = false;
+                  });
+                }
+                detenerScanner();
+              },
+              () => {}
+            )
+            .catch(() => {
+              setScannerActivo(false);
+              setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos del navegador o usa el botón 'Recoger' de cada producto para registrarlo manualmente." });
+            });
+        } catch {
+          setScannerActivo(false);
+          setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos del navegador o usa el botón 'Recoger' de cada producto para registrarlo manualmente." });
+        }
+      }, 100);
     }
 
     return (
@@ -557,7 +572,18 @@ export default function ViajeDetalle() {
                       <td className="px-4 py-2 font-mono text-xs text-slate-500">{qr}</td>
                       <td className="px-4 py-2 text-right">
                         {!esDevuelto && recojoActivo ? (
-                          <Button size="sm" variant="success" onClick={() => escanearRetorno(qr)}>
+                          <Button
+                            size="sm"
+                            variant="success"
+                            disabled={procesandoRetornoRef.current}
+                            onClick={() => {
+                              if (procesandoRetornoRef.current) return;
+                              procesandoRetornoRef.current = true;
+                              escanearRetorno(qr).finally(() => {
+                                procesandoRetornoRef.current = false;
+                              });
+                            }}
+                          >
                             Recoger
                           </Button>
                         ) : (
