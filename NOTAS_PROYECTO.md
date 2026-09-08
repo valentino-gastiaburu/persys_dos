@@ -748,8 +748,7 @@ el dinero se completa (marca pagado + fecha_pagada + monto + método + comproban
     (de `pedidos.ubicacion_maps`). Botón copiar por pedido y "Copiar visitas" (todos).
   - **ENVIOS** (derecha): tabla con mensaje (usa `Ciudad:` de `pedidos.ciudad`) + columnas
     Nombre / DNI / Teléfono / Dirección / Ciudad. Botón copiar por pedido y "Copiar envíos" (todos).
-- Solo muestra **los pedidos del día** (con `fecha_entrega` = hoy en hora de Lima, vía
-  `obtenerFechaHoyLima()`), sin borradores/cancelados/devueltos/ocultos.
+- Solo muestra **los viajes de entrega del día** (`viajes.fecha` = hoy en hora de Lima, `tipo='entrega'`, no cancelados). La info del mensaje viene del pedido asociado a cada viaje.
 - Endpoint nuevo `GET /api/pedidos/mensajes` (mismos roles que la lista de pedidos). Formato de
   montos sin decimales si es entero (90, no 90.00).
 

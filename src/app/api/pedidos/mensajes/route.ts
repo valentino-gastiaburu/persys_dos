@@ -3,9 +3,9 @@ import { getSupabase } from "@/lib/supabase";
 import { obtenerFechaHoyLima } from "@/lib/retraso";
 
 // GET /api/pedidos/mensajes
-// Devuelve los pedidos de HOY (fecha_entrega = hoy en hora de Lima) listos para
-// armar el "mensaje al motorizado": una vista con VISITAS a la izquierda y
-// ENVIOS a la derecha. Solo pedidos activos (no borrador/cancelado/devuelto).
+// Devuelve los VIAJES de HOY (fecha = hoy, tipo = entrega, no cancelados) para
+// armar el "mensaje al motorizado": VISITAS a la izquierda, ENVIOS a la derecha.
+// La info viene del pedido asociado a cada viaje.
 export async function GET() {
   const { error } = await requireRoles([
     "vendedora",
@@ -19,27 +19,46 @@ export async function GET() {
   const hoy = await obtenerFechaHoyLima();
   const supabase = getSupabase();
 
-  const { data: pedidos, error: err } = await supabase
-    .from("pedidos")
-    .select(
-      `id, codigo, estado, tipo_pedido, fecha_entrega, direccion_entrega, ciudad,
-       ubicacion_maps, observaciones, monto_total,
-       clientes (nombre, apellido, telefono, dni, distrito)`
-    )
-    .eq("fecha_entrega", hoy)
-    .neq("estado", "borrador")
+  // 1. Viajes de entrega de hoy (no cancelados)
+  const { data: viajes, error: viajesErr } = await supabase
+    .from("viajes")
+    .select("id, codigo, pedido_id, tipo, estado, fecha")
+    .eq("fecha", hoy)
+    .eq("tipo", "entrega")
     .neq("estado", "cancelado")
-    .neq("estado", "devuelto")
-    .eq("oculto", false)
     .order("creado_el", { ascending: true });
 
-  if (err) return Response.json({ error: "Error de base de datos" }, { status: 500 });
+  if (viajesErr) return Response.json({ error: "Error de base de datos" }, { status: 500 });
 
+  if (!viajes || viajes.length === 0) {
+    return Response.json({ fecha: hoy, visitas: [], envios: [] });
+  }
+
+  // 2. Pedidos asociados con datos del cliente
+  const pedidoIds = [...new Set(viajes.map((v) => v.pedido_id))];
+  const { data: pedidos, error: pedidosErr } = await supabase
+    .from("pedidos")
+    .select(
+      `id, codigo, tipo_pedido, direccion_entrega, ciudad, ubicacion_maps,
+       observaciones, monto_total,
+       clientes (nombre, apellido, telefono, dni, distrito)`
+    )
+    .in("id", pedidoIds);
+
+  if (pedidosErr) return Response.json({ error: "Error de base de datos" }, { status: 500 });
+
+  const pedidoById: Record<string, any> = {};
+  for (const p of pedidos ?? []) pedidoById[p.id] = p;
+
+  // 3. Armar mensajes
   const visitas: any[] = [];
   const envios: any[] = [];
 
-  for (const p of pedidos ?? []) {
+  for (const v of viajes) {
+    const p = pedidoById[v.pedido_id];
+    if (!p) continue;
     if (p.tipo_pedido !== "envio" && p.tipo_pedido !== "visita") continue;
+
     const cliente: any = p.clientes;
     const nombre = cliente
       ? `${cliente.nombre}${cliente.apellido ? " " + cliente.apellido : ""}`
@@ -57,8 +76,8 @@ export async function GET() {
         `PUNTO GPS: ${p.ubicacion_maps ?? ""}`,
       ].join("\n");
       visitas.push({
-        id: p.id,
-        codigo: p.codigo,
+        id: v.id,
+        codigo: v.codigo,
         mensaje,
         telefono: cliente?.telefono ?? "",
         distrito: cliente?.distrito ?? "",
@@ -79,8 +98,8 @@ export async function GET() {
         `PUNTO GPS: ${p.ubicacion_maps ?? ""}`,
       ].join("\n");
       envios.push({
-        id: p.id,
-        codigo: p.codigo,
+        id: v.id,
+        codigo: v.codigo,
         mensaje,
         nombre,
         dni: cliente?.dni ?? "",
