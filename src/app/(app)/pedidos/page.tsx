@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button, Input, Select, Badge, Spinner, ErrorBanner } from "@/components/ui";
+import MensajesMotorizado from "./_mensajes";
 
 const ESTADO_BADGE: Record<string, string> = {
   borrador: "slate",
@@ -57,6 +58,7 @@ type PedidoRow = {
 
 export default function PedidosPage() {
   const router = useRouter();
+  const [vista, setVista] = useState<"lista" | "mensajes">("lista");
   const [pedidos, setPedidos] = useState<PedidoRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -132,6 +134,33 @@ export default function PedidosPage() {
         </div>
       </div>
 
+      <div className="mb-4 flex gap-1 border-b border-slate-200">
+        <button
+          onClick={() => setVista("lista")}
+          className={`rounded-t-lg border-b-2 px-4 py-2 text-sm font-semibold ${
+            vista === "lista"
+              ? "border-blue-600 text-blue-700"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          Lista de pedidos
+        </button>
+        <button
+          onClick={() => setVista("mensajes")}
+          className={`rounded-t-lg border-b-2 px-4 py-2 text-sm font-semibold ${
+            vista === "mensajes"
+              ? "border-blue-600 text-blue-700"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          Mensaje al motorizado
+        </button>
+      </div>
+
+      {vista === "mensajes" ? (
+        <MensajesMotorizado />
+      ) : (
+        <>
       <div className="mb-4 flex flex-wrap gap-2">
         <Input
           placeholder="Buscar por código o producto..."
@@ -256,6 +285,8 @@ export default function PedidosPage() {
             </div>
           )}
         </div>
+        )}
+        </>
       )}
     </div>
   );

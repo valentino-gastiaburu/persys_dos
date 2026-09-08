@@ -739,4 +739,18 @@ el dinero se completa (marca pagado + fecha_pagada + monto + método + comproban
 - Nota: al 08/sep la BD casi no tiene datos (base limpiada el 05/sep, importación de stock
   pendiente), así que el dashboard se ve casi vacío hasta que haya actividad.
 
+## Mensaje al motorizado (08/sep/2026)
+
+- Nueva pestaña **"Mensaje al motorizado"** en `/pedidos` (junto a "Lista de pedidos").
+  Es un mensaje de WhatsApp que se copia y envía al motorizado, armado por pedido:
+  - **VISITAS** (izquierda): bloque `Celular: …` / `Distrito: …` (del cliente, col `clientes.distrito`)
+    / `Dirección: …` / `Nombre Cliente: …` / `Monto Total: …` / `OBSERVACIÓN: …` / `PUNTO GPS: …`
+    (de `pedidos.ubicacion_maps`). Botón copiar por pedido y "Copiar visitas" (todos).
+  - **ENVIOS** (derecha): tabla con mensaje (usa `Ciudad:` de `pedidos.ciudad`) + columnas
+    Nombre / DNI / Teléfono / Dirección / Ciudad. Botón copiar por pedido y "Copiar envíos" (todos).
+- Solo muestra **los pedidos del día** (con `fecha_entrega` = hoy en hora de Lima, vía
+  `obtenerFechaHoyLima()`), sin borradores/cancelados/devueltos/ocultos.
+- Endpoint nuevo `GET /api/pedidos/mensajes` (mismos roles que la lista de pedidos). Formato de
+  montos sin decimales si es entero (90, no 90.00).
+
 
