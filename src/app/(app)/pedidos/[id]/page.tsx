@@ -262,10 +262,11 @@ export default function PedidoDetallePage() {
   const puedeCancelar = ["solicitado", "confirmado"].includes(pedido.estado);
   const puedeVolverSolicitado = pedido.estado === "confirmado" && !hayPendientesRetiro;
   const tuvoViajes = viajes.length > 0;
-  const puedeEditar = !tuvoViajes && ["borrador", "solicitado", "confirmado", "alistado"].includes(pedido.estado);
+  const todosViajesCancelados = tuvoViajes && viajes.every((v) => v.estado === "cancelado");
+  const puedeEditar = (!tuvoViajes || todosViajesCancelados) && ["borrador", "solicitado", "confirmado", "alistado"].includes(pedido.estado);
   const puedeCrearViajes =
     rol != null && ["vendedora", "agendadora", "controller", "admin"].includes(rol);
-  const gestionarViajes = !puedeEditar && tuvoViajes && puedeCrearViajes;
+  const gestionarViajes = !puedeEditar && tuvoViajes && !todosViajesCancelados && puedeCrearViajes;
 
   // Viajes ordenados por creado_el descendente (más recientes primero)
   const viajesActivos = viajes
