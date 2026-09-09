@@ -764,44 +764,114 @@ el dinero se completa (marca pagado + fecha_pagada + monto + método + comproban
 - Endpoint nuevo `GET /api/pedidos/mensajes` (mismos roles que la lista de pedidos). Formato de
   montos sin decimales si es entero (90, no 90.00).
 
-## Comprobantes de pago → Google Drive (09/sep/2026, actualizado a OAuth2)
+## Comprobantes de pago (fotos/PDF) → Google Drive (09/sep/2026 — historia completa)
 
-- Objetivo: subir el comprobante (imagen o PDF) de un pago desde la app y guardarlo en un
-  Google Drive (cuenta de la dueña; la cuenta del dev tiene acceso).
-- **IMPORTANTE — service account NO funciona**: Google responde "Service Accounts do not
-  have storage quota" al subir a un Drive personal (Gmail). Solo funciona para Shared Drives
-  de Google Workspace. Por eso la app usa **OAuth2 con la cuenta que tiene acceso a la carpeta**:
-  autorización única → se guarda un refresh token → la app sube sola y el archivo aparece en la
-  carpeta compartida de la dueña (el storage corre por la cuenta autorizada).
-- **Flujo de autorización (una sola vez por entorno)**:
-  1. Google Cloud Console → «API y servicios» → «Pantalla de consentimiento»: tipo **Externo**,
-     nombre de app, emails, y agregar como **usuario de prueba** la cuenta que tiene acceso al Drive.
-  2. «Credenciales» → OAuth Client tipo **Aplicación web**, con redirect URIs:
-     - `http://localhost:3000/api/pagos/comprobante/auth/callback`
-     - `https://persys-dos.vercel.app/api/pagos/comprobante/auth/callback`
-  3. `GET /api/pagos/comprobante/auth` (roles controller/admin) → redirige a Google → autorizar →
-     el callback muestra el **refresh token** para copiar a las env vars.
-- Env vars: `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`
-  y `DRIVE_COMPROBANTES_FOLDER_ID=1n8Khawzv86oXgDCwfucFBfesXY7uO9hq`.
-  El refresh token **NO se sube a git** (`.env.local`/`.env*` en `.gitignore`).
-- Visibilidad del comprobante: **cualquiera con el link** (rol `reader`) → se ve embebido en la web.
-  Si el permiso falla, la subida no se aborta (queda visible solo para quien accede al Drive).
-- Tipos aceptados: imágenes (`image/*`) y PDF (`application/pdf`), máx 5 MB.
-- Código:
-  - `src/lib/drive.ts`: auth OAuth2 (scope `drive.file`) + `subirComprobante()` + helpers
-    `generarUrlAutorizacion()`/`canjearCodigo()` para el flujo de una vez.
-  - `GET /api/pagos/comprobante/auth` y `/auth/callback`: flujo OAuth (guarda nada, solo muestra el token).
-  - `POST /api/pagos/comprobante`: sube el archivo (multipart, campo `archivo`), devuelve
-    `{ ok, comprobante }`. El link se guarda en `pagos.comprobante` al registrar el pago.
-  - Flujo de subida en el frontend (input `type=file` con `image/*,application/pdf`, sube
-    antes de registrar y muestra nombre/tamaño): `PagarModal` en `src/app/(app)/pagos/page.tsx`,
-    `PagoModal` en `src/app/(app)/pedidos/[id]/page.tsx` y alta de pedido con pago inicial en
-    `src/app/(app)/pedidos/nuevo/page.tsx`. En "Cobros por revisar", botón/thumbnail por cobro
-    para ver el comprobante (`driveImageUrl`).
-- Para probar en Vercel: agregar en Settings → Environment Variables `GOOGLE_DRIVE_CLIENT_ID`,
-  `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN` y `DRIVE_COMPROBANTES_FOLDER_ID`.
-  El refresh token de producción se obtiene visitando el flujo en `https://persys-dos.vercel.app/...`.
-- Regla del helper `api()` (`src/lib/api.ts`): si el body es `FormData` NO pone
-  `Content-Type` (el browser setea el boundary del multipart).
+### Objetivo
+Subir el comprobante de un pago (foto o PDF) desde la app a un **Google Drive** que es de
+**la dueña** (no del dev). La cuenta del dev SOLO tiene acceso a una carpeta compartida de ese
+Drive. Desde la app se sube el archivo y queda en esa carpeta; en la web se puede ver embebido.
+
+### Cuentas y recursos en juego
+- **Google Cloud proyecto**: `persys-dos` (billing activo; tax status Personal, "Registered in
+  Peru as a VAT taxpayer: No"). Aquí vive todo lo de Google.
+- **Drive dueño**: cuenta de Google de **la dueña** (desconocida para nosotros; NO tenemos sus
+  credenciales). Solo se usó su carpeta compartida.
+- **Cuenta Google del dev que autoriza la subida**: `valentinogastiaburu@gmail.com` — es la que
+  tiene acceso (Editor) a la carpeta de la dueña. Es la cuenta que usamos para el OAuth de abajo.
+- **Service account (DESCARTADA)**: `persys-drive-uploader@persys-dos.iam.gserviceaccount.com`.
+  Se creó primero (Google Drive API habilitada), se generó su JSON que estuvo en
+  `credenciales/drive-service-account.json` (gitignored). **NO funciona para este caso** y el
+  JSON ya fue borrado del disco. No reusar.
+- **OAuth Client (Aplicación web, el SÍ se usa)**: client ID y client secret viven en Google
+  Cloud (proyecto `persys-dos` → OAuth Client persys-dos) y en `.env.local`/Vercel. **NO
+  documentarlos acá ni en git**: el repositorio tiene Push Protection activado y GitHub bloquea
+  el push si detecta el client secret o el client ID en un commit.
+  - Redirect URIs autorizadas:
+    - `http://localhost:3000/api/pagos/comprobante/auth/callback`
+    - `https://persys-dos.vercel.app/api/pagos/comprobante/auth/callback`
+- **Carpeta destino Drive**: ID `1n8Khawzv86oXgDCwfucFBfesXY7uO9hq`
+  (`https://drive.google.com/drive/u/1/folders/1n8Khawzv86oXgDCwfucFBfesXY7uO9hq`), compartida
+  con la cuenta del dev con permiso **Editor**.
+
+### Historia: qué intentamos y por qué lo cambiamos
+1. **Opción A — service account (DESCARTADA)**: se creó la service account, se compartió la
+   carpeta con su email y se implementó todo con JWT. Al probar, Google respondió:
+   `Service Accounts do not have storage quota. Leverage shared drives, or use OAuth delegation`.
+   **Motivo**: una service account NO puede subir a un Drive personal/free (Gmail); solo a
+   Shared Drives de Google Workspace. La dueña usa un Drive personal → imposible por esta vía.
+   Se descartó, el JSON de la service account se eliminó y `.env` dejó de referenciarlo.
+2. **Opción B — OAuth2 con la cuenta del dev (LA QUE FUNCIONA)**: se creó el OAuth Client
+   "Aplicación web", se configuró la pantalla de consentimiento (tipo **Externo**, con
+   `valentinogastiaburu@gmail.com` como **usuario de prueba**) y se hizo una **autorización
+   única**: visitar `…/api/pagos/comprobante/auth` → Google pide consentimiento → el callback
+   muestra el **refresh token** → se guarda como env var. Desde ahí la app sube sola y el
+   archivo aparece en la carpeta de la dueña. Probado E2E: subida con el refresh token →
+   permiso `anyone/reader` → OK (y borrado de prueba). **Un refresh token sirve para local y
+   para producción aunque se haya obtenido por el flujo de localhost** (va atado al cliente +
+   cuenta, no al dominio).
+
+### Cómo funciona hoy
+- **Upload en 3 puntos del frontend** (todos con input `type=file`, `accept="image/*,application/pdf"`,
+   máx. 5 MB, y muestran nombre/tamaño mientras sube): `PagarModal` en
+  `src/app/(app)/pagos/page.tsx`, `PagoModal` en `src/app/(app)/pedidos/[id]/page.tsx`, y alta de
+  pedido con pago inicial (`¿Pagó? = Sí`) en `src/app/(app)/pedidos/nuevo/page.tsx`.
+- Secuencia: **primero** se sube (`POST /api/pagos/comprobante`, multipart `archivo`) y
+  **después** se crea/guarda el pago con el link en `pagos.comprobante`. Por eso en
+  `pagos.comprobante` hoy vive la URL `https://drive.google.com/uc?id=<id>&export=view`.
+- **Comprobantes huérfanos**: si el POST del pago falla (pago inválido) el archivo ya quedó
+  subido → por eso cada frontend, al fallar, borra el archivo con `DELETE
+  /api/pagos/comprobante?drive_id=<id>` (usando el `drive_id` que devuelve la subida). Bug
+  visto en vivo: "el pago fue inválido pero igual se subió la foto".
+- **Visibilidad**: cada archivo se comparte `anyone` con rol `reader` (link) al subirlo, para
+  poder verlo embebido sin login. Si ese permiso fallara la subida NO se aborta (queda visible
+  solo para quien accede al Drive).
+- **Ver el comprobante en la misma página**: en "Cobros por revisar" de `/pagos` cada cobro con
+  comprobante muestra un botón con miniatura. Al hacer clic abre un **modal** con el **visor
+  embebido de Google Drive** (`https://drive.google.com/file/d/<id>/preview` en un `<iframe>`),
+  que renderiza tanto fotos como PDFs (verificado HTTP 200). Antes se mostraba la URL de
+  thumbnail de Drive (`drive.google.com/thumbnail?id=...`) vía `driveImageUrl()`, pero para
+  PDFs esa miniatura devuelve la imagen del "documento con la esquina doblada" (parecía un
+  ícono de archivo), así que se pasó al `/preview`. La miniatura del botón sigue usando
+  `driveImageUrl()`; el modal usa el visor.
+- **Regla del helper `api()`** (`src/lib/api.ts`): si el body es `FormData` NO setea
+  `Content-Type` (el browser pone el boundary del multipart).
+- **Código**: `src/lib/drive.ts` (cliente OAuth2 scope `drive.file` + `subirComprobante()` +
+  helpers `generarUrlAutorizacion()`/`canjearCodigo()`); `src/app/api/pagos/comprobante/route.ts`
+  (POST sube, DELETE borra); `src/app/api/pagos/comprobante/auth/route.ts` + `/auth/callback`
+  (flujo OAuth de una vez: solo muestra el refresh token, no guarda nada). Los roles que pueden
+  subir: vendedora/agendadora/controller/admin; el flujo de autorización (auth) es solo
+  controller/admin.
+
+### Variables de entorno (SECRETOS — `.env.local` y Vercel, nunca en git)
+- `GOOGLE_DRIVE_CLIENT_ID` = client ID de arriba.
+- `GOOGLE_DRIVE_CLIENT_SECRET` = client secret de arriba.
+- `GOOGLE_DRIVE_REFRESH_TOKEN` = el token que muestra el flujo `…/auth` (obtenido UNA vez;
+  sirve para local y prod). En Vercel se obtiene visitando el flujo en
+  `https://persys-dos.vercel.app/api/pagos/comprobante/auth`.
+- `DRIVE_COMPROBANTES_FOLDER_ID` = `1n8Khawzv86oXgDCwfucFBfesXY7uO9hq`.
+- En el entorno ya no existe nada de service account (`GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON`,
+  `DRIVE_SERVICE_ACCOUNT_PATH`) — quedaron fuera del `.env.local`/`.env.example`.
+
+### Avisos
+- La app de Google **ya está PUBLICADA** (estado **Published**, tipo Externo, sin verificar).
+  Como usa un scope **no sensible** (`drive.file`) y tiene 1 solo dominio y sin logo, Google **no
+  exige verificación**. Consecuencias/consejos:
+  - El refresh token **ya no expira** (en Testing expiraba a los 7 días). Regenerado el
+    09/sep/2026 tras publicar; el nuevo está en `.env.local` pero **EN VERCEL TODAVÍA ESTÁ EL
+    VIEJO** → hay que actualizar `GOOGLE_DRIVE_REFRESH_TOKEN` en Vercel (dashboard → Settings →
+    Environment Variables) y hacer redeploy para que producción use el vigente.
+  - Al reautorizar, el aviso *"Google hasn't verified this app"* se muestra igual (app publicada
+    sin verificar) → "Configuración avanzada → Ir a persys-dos (no segura)". Cosmético: solo lo
+    ve la cuenta que autoriza, no los usuarios de Persys.
+  - OPCIONAL: se podría hacer brand verification para que aparezca nombre y logo en la pantalla
+    de consentimiento, pero obliga a verificar dominio (Search Console) y no aporta nada para
+    este uso interno. No hacer salvo que lo pida el usuario.
+- **Páginas públicas de legal**: `https://persys-dos.vercel.app/privacidad` y
+  `https://persys-dos.vercel.app/terminos` (rutas `src/app/privacidad/page.tsx` y
+  `src/app/terminos/page.tsx`, FUERA del segmento `(app)` para que no pidan sesión). Se crearon
+  por si Google exige esas URLs al publicar; el contacto es `valentinogastiaburu@gmail.com`.
+- Migrar al Supabase de la empresa **no afecta nada de esto** (es Google Drive): solo cambian
+  `SUPABASE_URL` y `SUPABASE_ANON_KEY`; las cuatro variables de Drive quedan igual (la cuenta de
+  Google es del dev, no de Supabase).
 
 
