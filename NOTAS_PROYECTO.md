@@ -290,6 +290,8 @@ API PÚBLICA DE CATÁLOGO (09/sep/2026): `GET /api/public/catalogo` (sin auth de
 **pública, sin clave**, rate limit en memoria 60 req/min/IP). Devuelve productos activos
 con `stock_almacen`/`stock_ventas` por talla; filtro opcional `?imei=`. Docs para los
 compañeros: `CATALOGO_API.md`. No requiere env var ni clave en Vercel.
+BUG CORREGIDO: `listarCatalogoPublico` no seleccionaba `id` en productos → `p.id` era
+`undefined` y TODO el stock salía vacío. Fix: agregar `id` al select (no expone el campo).
 
 **Estado de migraciones en Supabase:** para la **BD nueva** (empresa) correr en este orden:
 **01 → 02 → 03 → 04 → 05 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 →

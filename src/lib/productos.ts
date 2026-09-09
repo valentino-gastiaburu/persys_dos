@@ -202,7 +202,7 @@ export async function listarCatalogoPublico(): Promise<CatalogoPublicoProducto[]
     await Promise.all([
       supabase
         .from("productos")
-        .select("imei, nombre, tipo_talla, precio_referencial")
+        .select("id, imei, nombre, tipo_talla, precio_referencial")
         .eq("estado", "activo")
         .order("nombre"),
       supabase.from("tallas").select("id, nombre"),
