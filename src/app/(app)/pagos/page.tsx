@@ -408,10 +408,14 @@ function VerComprobante({ link }: { link: string }) {
   const [abierto, setAbierto] = useState(false);
   const img = driveImageUrl(link);
   const esImagen = img !== link;
-  const idArchivo = link.match(/[?&]id=([\w-]+)/)?.[1] ?? link.split("/d/")[1]?.split("/")[0] ?? null;
-  const previewPdf = idArchivo
+  const idArchivo =
+    link.match(/\/file\/d\/([^/?]+)/)?.[1] ||
+    link.match(/[?&]id=([^&]+)/)?.[1] ||
+    link.match(/drive\.google\.com\/(?:d|open)\/([^/?]+)/)?.[1] ||
+    null;
+  const previewUrl = idArchivo
     ? `https://drive.google.com/file/d/${idArchivo}/preview`
-    : link;
+    : img ?? link;
 
   return (
     <>
@@ -449,17 +453,11 @@ function VerComprobante({ link }: { link: string }) {
           }
         >
           <div className="flex flex-col items-center">
-            {esImagen ? (
-              <div className="max-h-[70vh] w-full overflow-auto rounded-lg border border-slate-200">
-                <img
-                  src={driveImageUrl(link) ?? ""}
-                  alt="Comprobante"
-                  className="mx-auto block"
-                />
-              </div>
-            ) : (
-              <iframe src={previewPdf} title="Comprobante PDF" className="h-[65vh] w-full rounded-lg border border-slate-200" />
-            )}
+            <iframe
+              src={previewUrl}
+              title="Comprobante"
+              className="h-[65vh] w-full rounded-lg border border-slate-200"
+            />
             <a
               href={link}
               target="_blank"
