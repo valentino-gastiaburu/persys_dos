@@ -276,6 +276,16 @@ tallas (A/B/C), configuraciones (1), admin `00000000` activo. Aún vacías: clie
 detalles_pedido, viajes, pagos.
 PENDIENTE: apuntar la app (Vercel y `.env.local`) al proyecto nuevo con sus SUPABASE_URL/
 key; crear usuarios reales desde el admin.
+PENDIENTE VERCEL (09/sep/2026): actualizar en Vercel → Settings → Environment Variables
+(All environments): `SUPABASE_URL=https://jeucdqguqovlfzmafovg.supabase.co`,
+`SUPABASE_ANON_KEY=sb_publishable_yr6HXBPU1DUU57hLBwfvlg_XAIzVq9z`; verificar que las 4 de
+Google Drive existen y que `GOOGLE_DRIVE_REFRESH_TOKEN` es el nuevo (ver `.env.local`);
+luego **Redeploy** de producción. No subir esas keys a git (Push Protection); el respaldo
+vive en `env_local_respaldo_2026-09-09.txt`.
+CONMUTACIÓN A EMPRESA (09/sep/2026): `.env.local` apuntando a `jeucdqguqovlfzmafovg`.
+El proyecto viejo (`ysuaeknqyujpphpkrwpb`) queda como PRUEBAS. Respaldo del `.env.local`
+original en `C:\Users\valen\AppData\Local\Temp\opencode\env_local_respaldo_2026-09-09.txt`
+(no subir secretos a git).
 
 **Estado de migraciones en Supabase:** para la **BD nueva** (empresa) correr en este orden:
 **01 → 02 → 03 → 04 → 05 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 →
