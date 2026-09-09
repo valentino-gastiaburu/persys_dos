@@ -1,25 +1,14 @@
 # API Pública de Catálogo — Persys
 
 Endpoint de solo lectura con el catálogo de productos y su stock. Se usa para la
-web de la empresa (catálogo para clientes). No requiere instalar nada: es una URL
-HTTP que devuelve JSON.
+web de la empresa (catálogo para clientes). No requiere instalar nada ni enviar
+ninguna clave: es una URL HTTP que devuelve JSON.
 
 ## URL
 
 ```
 GET https://persys-dos.vercel.app/api/public/catalogo
 ```
-
-## Autenticación
-
-Obligatoria, por **header** (no va en la URL). La clave se entrega por separado:
-
-```
-x-api-key: <CATALOGO_API_KEY>
-```
-
-- Sin header o con clave incorrecta → `401 {"error":"Clave no válida"}`.
-- Más de 30 peticiones por minuto por IP → `429 {"error":"Demasiadas peticiones"}`.
 
 ## Respuesta
 
@@ -53,7 +42,8 @@ Campos:
 
 `stock_ventas` = unidades en almacén **menos** las ya comprometidas en pedidos
 activos. Es la regla de disponibilidad que usa el sistema. Solo aparecen
-productos activos. La respuesta se cachea 15 s (`Cache-Control`).
+productos activos. La respuesta se cachea 15 s (`Cache-Control`). Hay un límite
+anti-abuso de 60 peticiones por minuto por IP (`429` si se supera).
 
 ## Filtro opcional por IMEI
 
@@ -66,9 +56,7 @@ Devuelve el mismo formato pero con un solo producto (o `total: 0` si no existe).
 ## Ejemplo (Node/fetch)
 
 ```js
-const res = await fetch("https://persys-dos.vercel.app/api/public/catalogo", {
-  headers: { "x-api-key": "<CATALOGO_API_KEY>" },
-});
+const res = await fetch("https://persys-dos.vercel.app/api/public/catalogo");
 if (!res.ok) throw new Error(await res.text());
 const { productos } = await res.json();
 ```
@@ -76,6 +64,5 @@ const { productos } = await res.json();
 ## Ejemplo (curl)
 
 ```bash
-curl -H "x-api-key: <CATALOGO_API_KEY>" \
-  https://persys-dos.vercel.app/api/public/catalogo
+curl https://persys-dos.vercel.app/api/public/catalogo
 ```
