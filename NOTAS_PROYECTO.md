@@ -266,6 +266,17 @@ configuración.
 14. `supabase/15_viaje_recojo_pendiente.sql` → agrega `'pendiente'` al enum
     `viaje_producto_estado` (pre-asignación de productos para recojo).
 
+**Estado Supabase empresa (09/sep/2026, proyecto `jeucdqguqovlfzmafovg`) — VERIFICADO:**
+migraciones corridas en orden (01, 02, 03–05, 08–19, 21, 22; 07 y 20 → 07 no aplica en BD
+nueva, 20 sí se corrió para importar stock viejo). Chequeo automático con anon key: 19 tablas
++ 5 vistas presentes, columnas críticas OK (talla_stock/talla_vendida, pagos estado/
+fecha_pactada/fecha_pagada/comprobante/revisado, pedidos regalo text + comprobante),
+write test (insert/update/delete) y RPC `replace_viaje_detalles` OK. Seeds: 21
+tallas (A/B/C), configuraciones (1), admin `00000000` activo. Aún vacías: clientes, pedidos,
+detalles_pedido, viajes, pagos.
+PENDIENTE: apuntar la app (Vercel y `.env.local`) al proyecto nuevo con sus SUPABASE_URL/
+key; crear usuarios reales desde el admin.
+
 **Estado de migraciones en Supabase:** para la **BD nueva** (empresa) correr en este orden:
 **01 → 02 → 03 → 04 → 05 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 →
 21 → 22** (07 y 20 NO se corren: el 07 ya viene integrado en `02_schema.sql`
