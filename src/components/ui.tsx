@@ -136,6 +136,7 @@ export function Badge({ children, color = "slate" }: { children: ReactNode; colo
     greenStrong: "bg-emerald-600 text-white",
     red: "bg-red-100 text-red-700",
     amber: "bg-amber-100 text-amber-700",
+    cyan: "bg-cyan-100 text-cyan-700",
     purple: "bg-purple-100 text-purple-700",
     gray: "bg-gray-100 text-gray-600",
   };

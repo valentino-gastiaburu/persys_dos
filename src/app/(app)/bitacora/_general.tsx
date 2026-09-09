@@ -50,6 +50,16 @@ const ETIQUETA_ENTIDAD: Record<string, string> = {
   pago: "Pago",
 };
 
+// Color fijo por tabla para que cada entidad se reconozca siempre igual en la bitácora.
+const COLOR_ENTIDAD: Record<string, string> = {
+  producto: "amber",
+  producto_unico: "purple",
+  pedido: "slate",
+  viaje: "cyan",
+  detalle_pedido: "blue",
+  pago: "green",
+};
+
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "—";
   if (typeof v === "object") return JSON.stringify(v);
@@ -156,9 +166,9 @@ export default function TabGeneral() {
                     <p className="text-xs capitalize text-slate-400">{r.usuarios?.rol ?? r.rol ?? ""}</p>
                   </td>
                   <td className="whitespace-nowrap px-4 py-2">
-                    <Badge color="blue">{ETIQUETA_ENTIDAD[r.entidad] ?? r.entidad}</Badge>
+                    <Badge color={COLOR_ENTIDAD[r.entidad] ?? "slate"}>{ETIQUETA_ENTIDAD[r.entidad] ?? r.entidad}</Badge>
                     {r.sub_entidad && (
-                      <Badge color="slate">{ETIQUETA_ENTIDAD[r.sub_entidad] ?? r.sub_entidad}</Badge>
+                      <Badge color={COLOR_ENTIDAD[r.sub_entidad] ?? "slate"}>{ETIQUETA_ENTIDAD[r.sub_entidad] ?? r.sub_entidad}</Badge>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2">
