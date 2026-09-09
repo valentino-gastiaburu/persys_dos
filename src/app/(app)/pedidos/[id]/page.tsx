@@ -219,16 +219,6 @@ export default function PedidoDetallePage() {
     else cargar();
   }
 
-  async function toggleRevisado(cobro: Pago) {
-    setError(null);
-    const { error } = await api(`/api/pedidos/${id}/pagos/${cobro.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ revisado: !cobro.revisado }),
-    });
-    if (error) setError(error);
-    else cargar();
-  }
-
   if (loading) return <Spinner />;
   if (!pedido) return <ErrorBanner message={error ?? "Pedido no encontrado"} />;
 
@@ -786,15 +776,13 @@ export default function PedidoDetallePage() {
                                     </a>
                                   ) : null}
                                   {["admin", "controller"].includes(rol ?? "") && (
-                                    <label className={`ml-2 inline-flex items-center gap-1 text-xs ${p.revisado ? "text-emerald-700" : "text-amber-600"}`}>
-                                      <input
-                                        type="checkbox"
-                                        checked={Boolean(p.revisado)}
-                                        onChange={() => toggleRevisado(p)}
-                                        className="h-3.5 w-3.5 rounded"
-                                      />
-                                      {p.revisado ? "Revisado" : "Revisar"}
-                                    </label>
+                                    <span
+                                      className={`ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                        p.revisado ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                                      }`}
+                                    >
+                                      {p.revisado ? "Revisado" : "Por revisar"}
+                                    </span>
                                   )}
                                 </span>
                                 <span className="font-medium text-emerald-700">

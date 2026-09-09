@@ -12,7 +12,9 @@ export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams;
   const estado = sp.get("estado");
   const soloSinRevisar = sp.get("solo_sin_revisar") === "1";
-  const limite = Math.min(200, Number(sp.get("limite") ?? 100) || 100);
+  // limite=0 -> sin límite (traer todo). Default 100, tope 200.
+  const limiteRaw = Number(sp.get("limite") ?? 100);
+  const limite = limiteRaw > 0 ? Math.min(200, limiteRaw) : null;
 
   const supabase = getSupabase();
 
@@ -27,8 +29,9 @@ export async function GET(request: NextRequest) {
       { count: "exact" }
     )
     .order("fecha", { ascending: false })
-    .order("fecha_pagada", { ascending: false, nullsFirst: false })
-    .limit(limite);
+    .order("fecha_pagada", { ascending: false, nullsFirst: false });
+
+  if (limite !== null) query = query.limit(limite);
 
   if (estado) query = query.eq("estado", estado);
   if (soloSinRevisar) query = query.eq("revisado", false);

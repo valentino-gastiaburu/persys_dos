@@ -66,7 +66,7 @@ export default function PagosPage() {
 
   const cargarRevisados = useCallback(async () => {
     const { data } = await api<{ cobros: CobroGlobal[]; puede_revisar: boolean }>(
-      "/api/pagos?estado=pagado&solo_sin_revisar=1&limite=100"
+      "/api/pagos?estado=pagado&limite=0"
     );
     setPorRevisar(data?.cobros ?? []);
     setPuedeRevisar(Boolean(data?.puede_revisar));
@@ -85,20 +85,13 @@ export default function PagosPage() {
     cargarRevisados();
   }
 
+  const sinRevisar = porRevisar.filter((c) => !c.revisado);
+  const revisados = porRevisar.filter((c) => c.revisado);
+
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold text-slate-800">Pagos</h1>
-      <div className="mb-4">
-        <label className="inline-flex items-center gap-2 text-sm text-slate-600">
-          <input
-            type="checkbox"
-            checked={soloDeuda}
-            onChange={(e) => setSoloDeuda(e.target.checked)}
-            className="rounded"
-          />
-          Solo pedidos con deuda
-        </label>
-      </div>
+      <h1 className="mb-6 text-2xl font-bold text-slate-800">Pagos</h1>
       <ErrorBanner message={error} />
 
       {revisable && (
@@ -106,25 +99,39 @@ export default function PagosPage() {
           <div className="flex items-center gap-2 border-b border-slate-200 bg-amber-50 px-5 py-3">
             <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
             <h2 className="flex-1 text-sm font-semibold text-slate-800">
-              Cobros por revisar
-              {porRevisar.length > 0 && (
+              Pagos registrados
+              {sinRevisar.length > 0 && (
                 <span className="ml-2 rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">
-                  {porRevisar.length}
+                  {sinRevisar.length} por revisar
                 </span>
               )}
             </h2>
-            <span className="text-xs text-slate-400">{puedeRevisar ? "Marca el cobro para confirmar que se recibió" : ""}</span>
+            <span className="text-xs text-slate-400">
+              {puedeRevisar
+                ? sinRevisar.length > 0
+                  ? "Marca el cobro para confirmar que se recibió"
+                  : "Todos los cobros revisados"
+                : ""}
+            </span>
           </div>
           <div className="max-h-80 overflow-y-auto p-4">
             {porRevisar.length === 0 ? (
-              <p className="py-4 text-center text-sm text-slate-400">Sin cobros pendientes de revisión.</p>
+              <p className="py-4 text-center text-sm text-slate-400">Sin pagos registrados.</p>
             ) : (
               <div className="space-y-1">
-                {porRevisar.map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                {sinRevisar.length > 0 && revisados.length > 0 && (
+                  <p className="px-1 pt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Por revisar
+                  </p>
+                )}
+                {sinRevisar.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                  >
                     <input
                       type="checkbox"
-                      checked={Boolean(c.revisado)}
+                      checked={false}
                       onChange={() => toggleRevisar(c)}
                       className="h-4 w-4 rounded"
                     />
@@ -141,9 +148,38 @@ export default function PagosPage() {
                         {c.metodo_pago ?? "—"} · {c.fecha_pagada ?? c.fecha_pactada ?? ""}
                       </p>
                     </div>
-                    {c.comprobante && (
-                      <VerComprobante link={c.comprobante} />
-                    )}
+                    {c.comprobante && <VerComprobante link={c.comprobante} />}
+                    <span className="font-semibold text-emerald-700">S/ {Number(c.monto ?? 0).toFixed(2)}</span>
+                  </div>
+                ))}
+                {sinRevisar.length > 0 && revisados.length > 0 && (
+                  <p className="px-1 pt-3 text-xs font-semibold uppercase tracking-wide text-emerald-600">
+                    Revisados
+                  </p>
+                )}
+                {revisados.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm"
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white">
+                      ✓
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-slate-800">
+                        {c.cliente_nombre ?? "Sin cliente"}
+                        {c.pedido_codigo && (
+                          <Link href={`/pedidos/${c.pedido_id}`} className="ml-2 text-xs text-blue-600 hover:underline">
+                            {c.pedido_codigo}
+                          </Link>
+                        )}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {c.metodo_pago ?? "—"} · {c.fecha_pagada ?? c.fecha_pactada ?? ""}
+                        <span className="ml-2 font-semibold text-emerald-700">Revisado</span>
+                      </p>
+                    </div>
+                    {c.comprobante && <VerComprobante link={c.comprobante} />}
                     <span className="font-semibold text-emerald-700">S/ {Number(c.monto ?? 0).toFixed(2)}</span>
                   </div>
                 ))}
@@ -153,36 +189,56 @@ export default function PagosPage() {
         </section>
       )}
 
-      {loading ? (
-        <Spinner />
-      ) : (
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-          {pedidos.length === 0 && (
-            <p className="col-span-full py-10 text-center text-sm text-slate-400">No hay pedidos por cobrar.</p>
-          )}
-          {pedidos.map((p) => (
-            <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-              <div className="min-w-0">
-                <Link href={`/pedidos/${p.id}`} className="font-semibold text-blue-700 hover:underline">
-                  {p.codigo}
-                </Link>
-                <p className="truncate text-sm text-slate-600">{p.cliente_nombre ?? "Sin cliente"}</p>
-                <p className="text-xs text-slate-500">
-                  Total S/ {Number(p.monto_total ?? 0).toFixed(2)}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-sm font-bold text-red-600">S/ {Number(p.deuda).toFixed(2)}</p>
-                {p.deuda > 0 && (
-                  <Button size="sm" className="mt-1" onClick={() => setPagar(p)}>
-                    Cobrar
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
+      <section className="mb-6 overflow-hidden rounded-xl border border-slate-300 bg-white">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3">
+          <h2 className="flex-1 text-sm font-semibold text-slate-800">Pedidos por cobrar</h2>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={soloDeuda}
+              onChange={(e) => setSoloDeuda(e.target.checked)}
+              className="rounded"
+            />
+            Solo pedidos con deuda
+          </label>
         </div>
-      )}
+        <div className="max-h-[26rem] overflow-y-auto p-4">
+          {loading ? (
+            <div className="flex justify-center py-10">
+              <Spinner />
+            </div>
+          ) : pedidos.length === 0 ? (
+            <p className="py-10 text-center text-sm text-slate-400">No hay pedidos por cobrar.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {pedidos.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+                >
+                  <div className="min-w-0">
+                    <Link href={`/pedidos/${p.id}`} className="font-semibold text-blue-700 hover:underline">
+                      {p.codigo}
+                    </Link>
+                    <p className="truncate text-sm text-slate-600">{p.cliente_nombre ?? "Sin cliente"}</p>
+                    <p className="text-xs text-slate-500">
+                      Total S/ {Number(p.monto_total ?? 0).toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-red-600">S/ {Number(p.deuda).toFixed(2)}</p>
+                    {p.deuda > 0 && (
+                      <Button size="sm" className="mt-1" onClick={() => setPagar(p)}>
+                        Cobrar
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
 
       {pagar && (
         <PagarModal
@@ -191,6 +247,7 @@ export default function PagosPage() {
           onDone={() => {
             setPagar(null);
             cargar();
+            if (revisable) cargarRevisados();
           }}
         />
       )}

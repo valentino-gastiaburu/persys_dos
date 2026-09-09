@@ -708,9 +708,13 @@ el dinero se completa (marca pagado + fecha_pagada + monto + método + comproban
   - **IMEI + Talla**: stock/movimientos por producto+talla con conteos por estado y lista de entalles.
 - Deep links desde: IMEI en `/productos` y `/productos-unicos`, QR en `/productos-unicos` y
   botón "Ver historial" en `/pedidos/[id]`. URL: `/bitacora?tab=...&id|producto|qr=...`.
-- **Pagos revisados**: pagos tienen checkbox "revisado" (solo admin/controller); el cambio se
-  registra en auditoría. Migraciones `21_auditoria.sql` y `22_pagos_revisados.sql` aplicadas
-  por el usuario en el SQL Editor.
+- **Pagos revisados**: el check "revisado" SOLO está en `/pagos` (admin/controller); el cambio se
+  registra en auditoría. En `/pagos` los pagos **nunca desaparecen**: al revisarlos quedan en
+  verde (grupo "Revisados"); en el detalle del pedido solo se muestra el estado (badge "Revisado"
+  verde / "Por revisar" ámbar) sin checkbox. El box de pagos y el de "Pedidos por cobrar" tienen
+  scroll propio (altura limitada). `GET /api/pagos` soporta `limite=0` = sin límite (default 100,
+  tope 200). Migraciones `21_auditoria.sql` y `22_pagos_revisados.sql` aplicadas por el usuario en
+  el SQL Editor.
 - **Auditoría central**: tabla `auditoria` + enums en `supabase/02_schema.sql`; logs en pedidos,
   viajes, pagos, productos, usuarios, producto_unicos.
 - **Fixes de kardex (`movimientos_stock`)** — escritores que fallaban en silencio:
@@ -825,7 +829,7 @@ Drive. Desde la app se sube el archivo y queda en esa carpeta; en la web se pued
 - **Visibilidad**: cada archivo se comparte `anyone` con rol `reader` (link) al subirlo, para
   poder verlo embebido sin login. Si ese permiso fallara la subida NO se aborta (queda visible
   solo para quien accede al Drive).
-- **Ver el comprobante en la misma página**: en "Cobros por revisar" de `/pagos` cada cobro con
+- **Ver el comprobante en la misma página**: en el box "Pagos registrados" de `/pagos` cada cobro con
   comprobante muestra un botón con miniatura. Al hacer clic abre un **modal** con el **visor
   embebido de Google Drive** (`https://drive.google.com/file/d/<id>/preview` en un `<iframe>`),
   que renderiza tanto fotos como PDFs (verificado HTTP 200). Antes se mostraba la URL de
