@@ -11,10 +11,23 @@ drop view if exists v_stock_reservado cascade;
 drop view if exists v_stock_almacen cascade;
 
 -- Triggers y función
-drop trigger if exists trg_productos_updated on productos;
-drop trigger if exists trg_productos_unicos_updated on productos_unicos;
-drop trigger if exists trg_pedidos_updated on pedidos;
-drop trigger if exists trg_viajes_updated on viajes;
+-- OJO: `drop trigger if exists ... on <tabla>` falla si la tabla no existe (42P01),
+-- por eso se condiciona a to_regclass: en BD vacía se saltea sin error.
+do $$
+begin
+  if to_regclass('public.productos') is not null then
+    drop trigger if exists trg_productos_updated on productos;
+  end if;
+  if to_regclass('public.productos_unicos') is not null then
+    drop trigger if exists trg_productos_unicos_updated on productos_unicos;
+  end if;
+  if to_regclass('public.pedidos') is not null then
+    drop trigger if exists trg_pedidos_updated on pedidos;
+  end if;
+  if to_regclass('public.viajes') is not null then
+    drop trigger if exists trg_viajes_updated on viajes;
+  end if;
+end $$;
 drop function if exists set_actualizado_el() cascade;
 
 -- Tablas (orden inverso de dependencias)

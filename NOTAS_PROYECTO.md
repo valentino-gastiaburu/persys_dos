@@ -272,6 +272,11 @@ configuración.
 [talla_stock/talla_vendida]; el 20 es importación de stock del sistema viejo, solo si se
 quiere replicar). Las migraciones 16–22 son aditivas/idempotentes y seguras sobre BD nueva.
 
+> **BUG CORREGIDO (09/sep/2026)**: `01_reset.sql` fallaba en BD vacía con
+> `42P01: relation "productos" does not exist` porque `drop trigger if exists ... on <tabla>`
+> igual valida la tabla (el IF EXISTS solo cubre el trigger). Ahora los drops de triggers van
+> condicionados a `to_regclass(...)` y funcionan tanto en BD vacía como en una existente.
+>
 > **BUG CORREGIDO (09/sep/2026)**: `02_schema.sql` tenía la vista `v_stock_reservado`
 > referenciando `d.talla_id`, columna que ya no existe en BD nueva (fue renombrada a
 > `talla_vendida` — ver `07_talla_stock_vendida.sql`). En el historial original no fallaba
