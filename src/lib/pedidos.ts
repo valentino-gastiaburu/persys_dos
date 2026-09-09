@@ -191,17 +191,18 @@ export async function recalcularTotalViaje(
   return total;
 }
 
-// Recalcula el monto_total de un pedido. Si ya tiene viaje(s), el total vive en
-// los viajes (Σ entregas − Σ regresos); si no (borrador/solicitado sin viaje),
-// usa la fórmula antigua: Σ subtotales activos + costo_envio.
+// Recalcula el monto_total de un pedido. Si tiene al menos un viaje ACTIVO, el
+// total vive en los viajes (Σ entregas − Σ regresos); si no hay viajes activos
+// (borrador/solicitado sin viaje, o todos los viajes cancelados), usa la fórmula
+// antigua: Σ subtotales activos + costo_envio.
 export async function recalcularMontoPedido(pedidoId: string): Promise<number> {
   const supabase = getSupabase();
   const { data: viajes } = await supabase
     .from("viajes")
-    .select("id")
-    .eq("pedido_id", pedidoId)
-    .limit(1);
-  if ((viajes?.length ?? 0) > 0) return calcularTotalPedido(pedidoId);
+    .select("id, estado")
+    .eq("pedido_id", pedidoId);
+  const tieneViajeActivo = (viajes ?? []).some((v) => v.estado !== "cancelado");
+  if (tieneViajeActivo) return calcularTotalPedido(pedidoId);
   const { data: detalles } = await supabase
     .from("detalles_pedido")
     .select("subtotal")

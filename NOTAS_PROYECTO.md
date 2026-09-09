@@ -346,6 +346,11 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
   la API (`PATCH /api/pedidos/[id]` y `PATCH`/`DELETE /api/pedidos/[id]/detalles/[detalleId]`),
   que filtran `estado != "cancelado"`; si queda algún viaje activo → "El pedido tiene viajes;
   editalo desde ahi".
+  - **Bug de total en 0** (fix 09/sep/2026): al editar un producto de un pedido con viajes todos
+    cancelados, `sincronizarTotalesPedido` → `recalcularMontoPedido` veía el viaje cancelado y
+    tomaba el camino "el total vive en los viajes", pero `calcularTotalPedido` excluye cancelados
+    → total 0. Ahora `recalcularMontoPedido` solo entra a ese camino si hay ≥1 viaje **activo**
+    (`estado != "cancelado"`); si todos están cancelados usa Σ subtotales activos + costo_envio.
 - **Edición de viaje alistado (VPU-aware)** (22/ago/2026):
   - Reducir cantidad con VPU asignado → exceso se pinta rojo, pasa a "Pendientes de devolver".
   - Eliminar (✕) con VPU → cantidad = 0, todos los VPUs quedan como pendientes de devolver.
