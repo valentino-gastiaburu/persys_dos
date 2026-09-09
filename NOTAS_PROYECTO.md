@@ -233,6 +233,14 @@ configuración.
    sola condición** (`failed to parse logic tree`). Se reemplazó por filtros encadenados
    (`.eq`/`.neq`/`.gt`). También `GET /api/tallas` y `GET /api/tandas` usaban `.order("tallas(orden)")`
    (sintaxis inválida en este PostgREST) → cambiadas a `.order(..., { foreignTable: ... })`.
+4. **Bug "Entallar" (09/sep/2026)**: al registrar un pedido, el selector "Entallar a" solo mostraba
+   UNA talla. Causa: la importación de stock viejo (`20`) solo creó filas en `producto_tallas`
+   para las tallas con stock, así que `GET /api/tallas?producto_id=` devolvía tallas incompletas.
+   Fix en `src/app/api/tallas/route.ts`: la lista de tallas de un producto ahora sale de su escala
+   según `tipo_talla` (`TIPO_TALLA_TIPOS`), no de `producto_tallas`; cada talla trae `cantidad` y
+   `cantidad_ventas` (0 si no hay). El select "Talla" (origen/stock) sigue filtrando en el cliente
+   solo las que tienen `cantidad_ventas > 0`. Migración opcional para completar `producto_tallas`:
+   `supabase/23_backfill_producto_tallas.sql` (idempotente; no toca lo existente).
 
 ## Scripts SQL (los corre el usuario en el SQL Editor)
 
@@ -295,9 +303,11 @@ BUG CORREGIDO: `listarCatalogoPublico` no seleccionaba `id` en productos → `p.
 
 **Estado de migraciones en Supabase:** para la **BD nueva** (empresa) correr en este orden:
 **01 → 02 → 03 → 04 → 05 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 →
-21 → 22** (07 y 20 NO se corren: el 07 ya viene integrado en `02_schema.sql`
+21 → 22 → 23** (07 y 20 NO se corren: el 07 ya viene integrado en `02_schema.sql`
 [talla_stock/talla_vendida]; el 20 es importación de stock del sistema viejo, solo si se
-quiere replicar). Las migraciones 16–22 son aditivas/idempotentes y seguras sobre BD nueva.
+quiere replicar). Las migraciones 16–23 son aditivas/idempotentes y seguras sobre BD nueva.
+La 23 completa `producto_tallas` con la escala completa de cada producto (dejar pendiente
+si se la corre antes de importar stock: se vuelve a correr sin problema al final).
 
 > **BUG CORREGIDO (09/sep/2026)**: `01_reset.sql` fallaba en BD vacía con
 > `42P01: relation "productos" does not exist` porque `drop trigger if exists ... on <tabla>`
