@@ -752,4 +752,42 @@ el dinero se completa (marca pagado + fecha_pagada + monto + método + comproban
 - Endpoint nuevo `GET /api/pedidos/mensajes` (mismos roles que la lista de pedidos). Formato de
   montos sin decimales si es entero (90, no 90.00).
 
+## Comprobantes de pago → Google Drive (09/sep/2026, actualizado a OAuth2)
+
+- Objetivo: subir el comprobante (imagen o PDF) de un pago desde la app y guardarlo en un
+  Google Drive (cuenta de la dueña; la cuenta del dev tiene acceso).
+- **IMPORTANTE — service account NO funciona**: Google responde "Service Accounts do not
+  have storage quota" al subir a un Drive personal (Gmail). Solo funciona para Shared Drives
+  de Google Workspace. Por eso la app usa **OAuth2 con la cuenta que tiene acceso a la carpeta**:
+  autorización única → se guarda un refresh token → la app sube sola y el archivo aparece en la
+  carpeta compartida de la dueña (el storage corre por la cuenta autorizada).
+- **Flujo de autorización (una sola vez por entorno)**:
+  1. Google Cloud Console → «API y servicios» → «Pantalla de consentimiento»: tipo **Externo**,
+     nombre de app, emails, y agregar como **usuario de prueba** la cuenta que tiene acceso al Drive.
+  2. «Credenciales» → OAuth Client tipo **Aplicación web**, con redirect URIs:
+     - `http://localhost:3000/api/pagos/comprobante/auth/callback`
+     - `https://persys-dos.vercel.app/api/pagos/comprobante/auth/callback`
+  3. `GET /api/pagos/comprobante/auth` (roles controller/admin) → redirige a Google → autorizar →
+     el callback muestra el **refresh token** para copiar a las env vars.
+- Env vars: `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN`
+  y `DRIVE_COMPROBANTES_FOLDER_ID=1n8Khawzv86oXgDCwfucFBfesXY7uO9hq`.
+  El refresh token **NO se sube a git** (`.env.local`/`.env*` en `.gitignore`).
+- Visibilidad del comprobante: **cualquiera con el link** (rol `reader`) → se ve embebido en la web.
+  Si el permiso falla, la subida no se aborta (queda visible solo para quien accede al Drive).
+- Tipos aceptados: imágenes (`image/*`) y PDF (`application/pdf`), máx 5 MB.
+- Código:
+  - `src/lib/drive.ts`: auth OAuth2 (scope `drive.file`) + `subirComprobante()` + helpers
+    `generarUrlAutorizacion()`/`canjearCodigo()` para el flujo de una vez.
+  - `GET /api/pagos/comprobante/auth` y `/auth/callback`: flujo OAuth (guarda nada, solo muestra el token).
+  - `POST /api/pagos/comprobante`: sube el archivo (multipart, campo `archivo`), devuelve
+    `{ ok, comprobante }`. El link se guarda en `pagos.comprobante` al registrar el pago.
+  - `PagarModal` (`src/app/(app)/pagos/page.tsx`): input `type=file` en vez del link pegado a
+    mano; sube antes de registrar el pago. En "Cobros por revisar", botón/thumbnail por cobro
+    para ver el comprobante (`driveImageUrl`).
+- Para probar en Vercel: agregar en Settings → Environment Variables `GOOGLE_DRIVE_CLIENT_ID`,
+  `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN` y `DRIVE_COMPROBANTES_FOLDER_ID`.
+  El refresh token de producción se obtiene visitando el flujo en `https://persys-dos.vercel.app/...`.
+- Regla del helper `api()` (`src/lib/api.ts`): si el body es `FormData` NO pone
+  `Content-Type` (el browser setea el boundary del multipart).
+
 

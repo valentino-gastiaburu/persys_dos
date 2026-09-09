@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { driveImageUrl } from "@/lib/utils";
 import { Button, Input, Modal, Select, Spinner, ErrorBanner } from "@/components/ui";
 
 type PedidoRow = {
@@ -140,6 +141,9 @@ export default function PagosPage() {
                         {c.metodo_pago ?? "—"} · {c.fecha_pagada ?? c.fecha_pactada ?? ""}
                       </p>
                     </div>
+                    {c.comprobante && (
+                      <VerComprobante link={c.comprobante} />
+                    )}
                     <span className="font-semibold text-emerald-700">S/ {Number(c.monto ?? 0).toFixed(2)}</span>
                   </div>
                 ))}
@@ -209,7 +213,8 @@ function PagarModal({
   const [metodoPago, setMetodoPago] = useState("yape");
   const [cobroId, setCobroId] = useState("");
   const [fechaPago, setFechaPago] = useState("");
-  const [comprobante, setComprobante] = useState("");
+  const [comprobanteArchivo, setComprobanteArchivo] = useState<File | null>(null);
+  const [subiendo, setSubiendo] = useState(false);
   const [nuevaFechaCobro, setNuevaFechaCobro] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -234,11 +239,31 @@ function PagarModal({
   async function registrar() {
     setError(null);
     setLoading(true);
+
+    let linkComprobante: string | undefined;
+    if (comprobanteArchivo) {
+      setSubiendo(true);
+      const fd = new FormData();
+      fd.append("archivo", comprobanteArchivo);
+      const { data, error: subidaErr } = await api<{
+        ok: boolean;
+        comprobante?: string;
+        error?: string;
+      }>("/api/pagos/comprobante", { method: "POST", body: fd });
+      if (subidaErr || !data?.ok || !data.comprobante) {
+        setSubiendo(false);
+        setError(subidaErr || "No se pudo subir el comprobante. Intenta de nuevo.");
+        setLoading(false);
+        return;
+      }
+      linkComprobante = data.comprobante;
+    }
+
     const body: Record<string, unknown> = {
       monto: Number(monto),
       metodo_pago: metodoPago,
       fecha_pagada: fechaPago || undefined,
-      comprobante: comprobante.trim() || undefined,
+      comprobante: linkComprobante,
     };
     if (cobroId) body.pago_id = cobroId;
 
@@ -246,6 +271,7 @@ function PagarModal({
       method: "POST",
       body: JSON.stringify(body),
     });
+    setSubiendo(false);
     setLoading(false);
     if (err) {
       setError(err);
@@ -274,7 +300,9 @@ function PagarModal({
         footer={
           <>
             <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-            <Button onClick={registrar} disabled={loading}>Registrar pago</Button>
+            <Button onClick={registrar} disabled={loading || subiendo}>
+              {subiendo ? "Subiendo comprobante..." : "Registrar pago"}
+            </Button>
           </>
         }
       >
@@ -310,12 +338,22 @@ function PagarModal({
             <option value="efectivo">Efectivo</option>
           </Select>
           <Input label="Fecha de pago" type="date" value={fechaPago} onChange={(e) => setFechaPago(e.target.value)} />
-          <Input
-            label="Comprobante de pago (link Drive)"
-            value={comprobante}
-            onChange={(e) => setComprobante(e.target.value)}
-            placeholder="Pega el link del comprobante"
-          />
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-500">
+              Comprobante de pago (foto o PDF)
+            </label>
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => setComprobanteArchivo(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+            />
+            {comprobanteArchivo && (
+              <p className="mt-1 truncate text-xs text-slate-500">
+                {comprobanteArchivo.name} ({(comprobanteArchivo.size / 1024 / 1024).toFixed(2)} MB)
+              </p>
+            )}
+          </div>
 
           {!cubreTodo && (
             <Input
@@ -357,5 +395,36 @@ function PagarModal({
         </Modal>
       )}
     </>
+  );
+}
+
+function VerComprobante({ link }: { link: string }) {
+  const img = driveImageUrl(link);
+  const esImagen = img !== link;
+  return (
+    <a
+      href={img ?? link}
+      target="_blank"
+      rel="noreferrer"
+      title="Ver comprobante"
+      className="group flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-50 hover:border-blue-300"
+    >
+      {esImagen && img ? (
+        <img src={img} alt="Comprobante" className="h-full w-full object-cover group-hover:opacity-80" />
+      ) : (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-4 w-4 text-blue-600"
+        >
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6" />
+        </svg>
+      )}
+    </a>
   );
 }
