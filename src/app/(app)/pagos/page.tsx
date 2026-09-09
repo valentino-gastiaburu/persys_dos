@@ -405,32 +405,72 @@ function PagarModal({
 }
 
 function VerComprobante({ link }: { link: string }) {
+  const [abierto, setAbierto] = useState(false);
   const img = driveImageUrl(link);
   const esImagen = img !== link;
+  const idArchivo = link.match(/[?&]id=([\w-]+)/)?.[1] ?? link.split("/d/")[1]?.split("/")[0] ?? null;
+  const previewPdf = idArchivo
+    ? `https://drive.google.com/file/d/${idArchivo}/preview`
+    : link;
+
   return (
-    <a
-      href={img ?? link}
-      target="_blank"
-      rel="noreferrer"
-      title="Ver comprobante"
-      className="group flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-50 hover:border-blue-300"
-    >
-      {esImagen && img ? (
-        <img src={img} alt="Comprobante" className="h-full w-full object-cover group-hover:opacity-80" />
-      ) : (
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="h-4 w-4 text-blue-600"
+    <>
+      <button
+        type="button"
+        onClick={() => setAbierto(true)}
+        title="Ver comprobante"
+        className="group flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-50 hover:border-blue-300"
+      >
+        {esImagen && img ? (
+          <img src={img} alt="Comprobante" className="h-full w-full object-cover group-hover:opacity-80" />
+        ) : (
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4 text-blue-600"
+          >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+          </svg>
+        )}
+      </button>
+
+      {abierto && (
+        <Modal
+          open
+          onClose={() => setAbierto(false)}
+          title="Comprobante de pago"
+          footer={
+            <Button variant="secondary" onClick={() => setAbierto(false)}>Cerrar</Button>
+          }
         >
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <path d="M14 2v6h6" />
-        </svg>
+          <div className="flex flex-col items-center">
+            {esImagen ? (
+              <div className="max-h-[70vh] w-full overflow-auto rounded-lg border border-slate-200">
+                <img
+                  src={driveImageUrl(link) ?? ""}
+                  alt="Comprobante"
+                  className="mx-auto block"
+                />
+              </div>
+            ) : (
+              <iframe src={previewPdf} title="Comprobante PDF" className="h-[65vh] w-full rounded-lg border border-slate-200" />
+            )}
+            <a
+              href={link}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 text-xs text-blue-600 hover:underline"
+            >
+              Abrir en Google Drive ↗
+            </a>
+          </div>
+        </Modal>
       )}
-    </a>
+    </>
   );
 }
