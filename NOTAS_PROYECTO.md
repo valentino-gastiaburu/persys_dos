@@ -266,10 +266,18 @@ configuración.
 14. `supabase/15_viaje_recojo_pendiente.sql` → agrega `'pendiente'` al enum
     `viaje_producto_estado` (pre-asignación de productos para recojo).
 
-**Estado de migraciones en Supabase:** 03–15 + 07 ya corrieron. Para una BD nueva:
-**01 → 02 → 03 → 04 → 05 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15** (07 no hace falta,
-porque `02_schema.sql` ya trae `talla_stock`/`talla_vendida`). Para la BD existente: todas
-ya corrieron (aditivas/idempotentes; no tocan datos).
+**Estado de migraciones en Supabase:** para la **BD nueva** (empresa) correr en este orden:
+**01 → 02 → 03 → 04 → 05 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 →
+21 → 22** (07 y 20 NO se corren: el 07 ya viene integrado en `02_schema.sql`
+[talla_stock/talla_vendida]; el 20 es importación de stock del sistema viejo, solo si se
+quiere replicar). Las migraciones 16–22 son aditivas/idempotentes y seguras sobre BD nueva.
+
+> **BUG CORREGIDO (09/sep/2026)**: `02_schema.sql` tenía la vista `v_stock_reservado`
+> referenciando `d.talla_id`, columna que ya no existe en BD nueva (fue renombrada a
+> `talla_vendida` — ver `07_talla_stock_vendida.sql`). En el historial original no fallaba
+> porque allí la columna se llamaba `talla_id` y PostgreSQL actualiza las vistas al renombrar.
+> Fix: la vista ahora usa `d.talla_stock` (la talla que consume stock, consistente con la app).
+> Si una vista ya creada quedara con el nombre viejo en otra BD, recrearla o usar el 07.
 
 ## Smoke test E2E (validado OK contra la BD real)
 
