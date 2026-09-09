@@ -78,12 +78,13 @@ export default function Sidebar({ user }: { user: SessionUser }) {
   const pathname = usePathname();
   const logout = useLogout();
   const esAlmacen = user.rol === "almacen" || user.rol === "controller" || user.rol === "admin";
+  const esVendedora = user.rol === "vendedora";
 
   const links: LinkItem[] = [
-    { href: "/", label: "Inicio", icon: "inicio" },
+    { href: "/", label: "Inicio", icon: "inicio", show: !esVendedora },
     { href: "/pedidos", label: "Pedidos", icon: "pedidos" },
     { href: "/productos", label: "Productos", icon: "productos" },
-    { href: "/productos-unicos", label: "Productos Únicos", icon: "unicos" },
+    { href: "/productos-unicos", label: "Productos Únicos", icon: "unicos", show: !esVendedora },
     { href: "/clientes", label: "Clientes", icon: "clientes" },
     { href: "/pagos", label: "Pagos", icon: "pagos" },
     { href: "/cargos", label: "Cargos", icon: "cargos" },
