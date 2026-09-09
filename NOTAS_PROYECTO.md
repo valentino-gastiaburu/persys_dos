@@ -281,7 +281,8 @@ quiere replicar). Las migraciones 16–22 son aditivas/idempotentes y seguras so
 > referenciando `d.talla_id`, columna que ya no existe en BD nueva (fue renombrada a
 > `talla_vendida` — ver `07_talla_stock_vendida.sql`). En el historial original no fallaba
 > porque allí la columna se llamaba `talla_id` y PostgreSQL actualiza las vistas al renombrar.
-> Fix: la vista ahora usa `d.talla_stock` (la talla que consume stock, consistente con la app).
+> Fix: la vista ahora usa `d.talla_stock` (la talla que consume stock, consistente con la app)
+> y expone la columna con **alias `talla_id`** en la salida para no romper `v_stock_comercial`.
 > Si una vista ya creada quedara con el nombre viejo en otra BD, recrearla o usar el 07.
 
 ## Smoke test E2E (validado OK contra la BD real)

@@ -367,7 +367,7 @@ where estado = 'en_almacen'
 group by producto_id, talla_id;
 
 create view v_stock_reservado as
-select d.producto_id, d.talla_stock, sum(d.cantidad)::int as stock_reservado
+select d.producto_id, d.talla_stock as talla_id, sum(d.cantidad)::int as stock_reservado
 from detalles_pedido d
 join pedidos p on p.id = d.pedido_id
 where d.estado = 'activo'
