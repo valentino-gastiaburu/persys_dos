@@ -286,6 +286,12 @@ CONMUTACIÓN A EMPRESA (09/sep/2026): `.env.local` apuntando a `jeucdqguqovlfzma
 El proyecto viejo (`ysuaeknqyujpphpkrwpb`) queda como PRUEBAS. Respaldo del `.env.local`
 original en `C:\Users\valen\AppData\Local\Temp\opencode\env_local_respaldo_2026-09-09.txt`
 (no subir secretos a git).
+API PÚBLICA DE CATÁLOGO (09/sep/2026): `GET /api/public/catalogo` (sin auth de sesión,
+usa header `x-api-key` = `CATALOGO_API_KEY`, rate limit en memoria 30 req/min/IP).
+Devuelve productos activos con `stock_almacen`/`stock_ventas` por talla; filtro opcional
+`?imei=`. Docs para los compañeros: `CATALOGO_API.md`. PENDIENTE: agregar
+`CATALOGO_API_KEY` (valor en `.env.local` y respaldo) a Vercel + redeploy, y pasársela a
+los compañeros con `CATALOGO_API.md`.
 
 **Estado de migraciones en Supabase:** para la **BD nueva** (empresa) correr en este orden:
 **01 → 02 → 03 → 04 → 05 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 →

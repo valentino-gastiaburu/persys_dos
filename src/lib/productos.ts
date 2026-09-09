@@ -184,6 +184,60 @@ export async function getStockVentasPorTalla() {
   return stock;
 }
 
+export interface CatalogoPublicoProducto {
+  imei: string | null;
+  nombre: string | null;
+  tipo_talla: string | null;
+  precio_referencial: number | null;
+  stock_almacen: Record<string, number>;
+  stock_ventas: Record<string, number>;
+}
+
+// Catálogo público para la web de la empresa (API /api/public/catalogo).
+// Solo campos de catálogo (nada interno), solo productos activos, y stock
+// escaleado por nombre de talla usando las mismas reglas del sistema.
+export async function listarCatalogoPublico(): Promise<CatalogoPublicoProducto[]> {
+  const supabase = getSupabase();
+  const [{ data: productos }, { data: tallasRows }, stockVentas, conteo] =
+    await Promise.all([
+      supabase
+        .from("productos")
+        .select("imei, nombre, tipo_talla, precio_referencial")
+        .eq("estado", "activo")
+        .order("nombre"),
+      supabase.from("tallas").select("id, nombre"),
+      getStockVentasPorTalla(),
+      getConteoPorTalla(),
+    ]);
+
+  const tallaNombre: Record<string, string> = {};
+  for (const t of tallasRows ?? []) tallaNombre[t.id] = t.nombre;
+
+  const porTalla = (map: Record<string, number>) => {
+    const out: Record<string, Record<string, number>> = {};
+    for (const [k, n] of Object.entries(map)) {
+      const [productoId, tallaId] = k.split("|");
+      const nombre = tallaNombre[tallaId];
+      if (!nombre) continue;
+      out[productoId] = out[productoId] ?? {};
+      out[productoId][nombre] = (out[productoId][nombre] ?? 0) + n;
+    }
+    return out;
+  };
+
+  const stockPorId = porTalla(stockVentas);
+  const almacenPorId = porTalla(conteo);
+
+  return (productos ?? []).map((p: any) => ({
+    imei: p.imei ?? null,
+    nombre: p.nombre ?? null,
+    tipo_talla: p.tipo_talla ?? null,
+    precio_referencial: p.precio_referencial ?? null,
+    stock_almacen: almacenPorId[p.id] ?? {},
+    stock_ventas: stockPorId[p.id] ?? {},
+  }));
+}
+
 // Devuelve productos con su stock por talla.
 // stock = conteo de productos_unicos existentes por talla (excluye eliminados).
 // stock_ventas = stock almacén − unidades comprometidas en pedidos realizados
