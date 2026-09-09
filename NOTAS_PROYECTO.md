@@ -781,8 +781,10 @@ el dinero se completa (marca pagado + fecha_pagada + monto + método + comproban
   - `GET /api/pagos/comprobante/auth` y `/auth/callback`: flujo OAuth (guarda nada, solo muestra el token).
   - `POST /api/pagos/comprobante`: sube el archivo (multipart, campo `archivo`), devuelve
     `{ ok, comprobante }`. El link se guarda en `pagos.comprobante` al registrar el pago.
-  - `PagarModal` (`src/app/(app)/pagos/page.tsx`): input `type=file` en vez del link pegado a
-    mano; sube antes de registrar el pago. En "Cobros por revisar", botón/thumbnail por cobro
+  - Flujo de subida en el frontend (input `type=file` con `image/*,application/pdf`, sube
+    antes de registrar y muestra nombre/tamaño): `PagarModal` en `src/app/(app)/pagos/page.tsx`,
+    `PagoModal` en `src/app/(app)/pedidos/[id]/page.tsx` y alta de pedido con pago inicial en
+    `src/app/(app)/pedidos/nuevo/page.tsx`. En "Cobros por revisar", botón/thumbnail por cobro
     para ver el comprobante (`driveImageUrl`).
 - Para probar en Vercel: agregar en Settings → Environment Variables `GOOGLE_DRIVE_CLIENT_ID`,
   `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN` y `DRIVE_COMPROBANTES_FOLDER_ID`.

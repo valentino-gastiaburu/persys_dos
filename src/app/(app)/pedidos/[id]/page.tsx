@@ -1792,7 +1792,8 @@ function PagoModal({
   const [metodoPago, setMetodoPago] = useState("yape");
   const [cobroId, setCobroId] = useState("");
   const [fechaPago, setFechaPago] = useState("");
-  const [comprobante, setComprobante] = useState("");
+  const [comprobanteArchivo, setComprobanteArchivo] = useState<File | null>(null);
+  const [subiendo, setSubiendo] = useState(false);
   const [nuevaFechaCobro, setNuevaFechaCobro] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1805,11 +1806,31 @@ function PagoModal({
   async function registrar() {
     setError(null);
     setLoading(true);
+
+    let linkComprobante: string | undefined;
+    if (comprobanteArchivo) {
+      setSubiendo(true);
+      const fd = new FormData();
+      fd.append("archivo", comprobanteArchivo);
+      const { data, error: subidaErr } = await api<{
+        ok: boolean;
+        comprobante?: string;
+        error?: string;
+      }>("/api/pagos/comprobante", { method: "POST", body: fd });
+      if (subidaErr || !data?.ok || !data.comprobante) {
+        setSubiendo(false);
+        setError(subidaErr || "No se pudo subir el comprobante. Intenta de nuevo.");
+        setLoading(false);
+        return;
+      }
+      linkComprobante = data.comprobante;
+    }
+
     const body: Record<string, unknown> = {
       monto: Number(monto),
       metodo_pago: metodoPago,
       fecha_pagada: fechaPago || undefined,
-      comprobante: comprobante.trim() || undefined,
+      comprobante: linkComprobante,
     };
     if (cobroId) body.pago_id = cobroId;
 
@@ -1844,7 +1865,9 @@ function PagoModal({
         footer={
           <>
             <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-            <Button onClick={registrar} disabled={loading}>Guardar</Button>
+            <Button onClick={registrar} disabled={loading || subiendo}>
+              {subiendo ? "Subiendo comprobante..." : "Guardar"}
+            </Button>
           </>
         }
       >
@@ -1875,12 +1898,22 @@ function PagoModal({
             <option value="efectivo">Efectivo</option>
           </Select>
           <Input label="Fecha de pago" type="date" value={fechaPago} onChange={(e) => setFechaPago(e.target.value)} />
-          <Input
-            label="Comprobante de pago (link Drive)"
-            value={comprobante}
-            onChange={(e) => setComprobante(e.target.value)}
-            placeholder="Pega el link del comprobante"
-          />
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-500">
+              Comprobante de pago (foto o PDF)
+            </label>
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => setComprobanteArchivo(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+            />
+            {comprobanteArchivo && (
+              <p className="mt-1 truncate text-xs text-slate-500">
+                {comprobanteArchivo.name} ({(comprobanteArchivo.size / 1024 / 1024).toFixed(2)} MB)
+              </p>
+            )}
+          </div>
           {!cubreTodo && (
             <Input
               label="Fecha del siguiente cobro (opcional)"

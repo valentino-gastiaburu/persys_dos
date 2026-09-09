@@ -97,7 +97,8 @@ export default function NuevoPedidoPage() {
   const [pagoInicial, setPagoInicial] = useState("no");
   const [montoPrimerPago, setMontoPrimerPago] = useState("");
   const [fechaPagoParte2, setFechaPagoParte2] = useState("");
-  const [comprobante, setComprobante] = useState("");
+  const [comprobanteArchivo, setComprobanteArchivo] = useState<File | null>(null);
+  const [subiendo, setSubiendo] = useState(false);
   const [observaciones, setObservaciones] = useState("");
   const [regalo, setRegalo] = useState("");
 
@@ -302,6 +303,25 @@ export default function NuevoPedidoPage() {
     if (confirmar && !fechaEntrega) return setError("Indica la fecha de entrega");
     setLoading(true);
 
+    // Si viene comprobante (parte única y pagó), subirlo primero a Google Drive.
+    let linkComprobante: string | null = null;
+    if (confirmar && Number(partes) === 1 && pagoInicial === "si" && comprobanteArchivo) {
+      setSubiendo(true);
+      const fd = new FormData();
+      fd.append("archivo", comprobanteArchivo);
+      const r = await api<{ ok: boolean; comprobante?: string; error?: string }>(
+        "/api/pagos/comprobante",
+        { method: "POST", body: fd }
+      );
+      if (r.error || !r.data?.ok || !r.data.comprobante) {
+        setSubiendo(false);
+        setError(r.error || "No se pudo subir el comprobante. Intenta de nuevo.");
+        setLoading(false);
+        return;
+      }
+      linkComprobante = r.data.comprobante;
+    }
+
     // Batch único: el servidor relee el stock de ventas, valida todo el lote y
     // rechaza con { conflictos } si algo dejaría el stock en negativo.
     const { data, error: err } = await api<{
@@ -336,8 +356,8 @@ export default function NuevoPedidoPage() {
               : null,
         fecha_siguiente_pago: Number(partes) > 1 ? fechaPagoParte2 || null : null,
         comprobante:
-          Number(partes) === 1 && pagoInicial === "si" && comprobante.trim()
-            ? comprobante.trim()
+          Number(partes) === 1 && pagoInicial === "si" && linkComprobante
+            ? linkComprobante
             : null,
         observaciones: observaciones || null,
         regalo: regalo || null,
@@ -355,6 +375,7 @@ export default function NuevoPedidoPage() {
     });
 
     setLoading(false);
+    setSubiendo(false);
     if (err || !data?.pedido) {
       if (data?.conflictos && data.conflictos.length > 0) {
         setConflictos(data.conflictos);
@@ -577,12 +598,22 @@ export default function NuevoPedidoPage() {
                   <option value="si">Sí</option>
                 </Select>
                 {pagoInicial === "si" && (
-                  <Input
-                    label="Comprobante de pago (link Drive)"
-                    value={comprobante}
-                    onChange={(e) => setComprobante(e.target.value)}
-                    placeholder="Pega el link del comprobante (Drive)"
-                  />
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-500">
+                      Comprobante de pago (foto o PDF)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => setComprobanteArchivo(e.target.files?.[0] ?? null)}
+                      className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-slate-700 hover:file:bg-slate-200"
+                    />
+                    {comprobanteArchivo && (
+                      <p className="mt-1 truncate text-xs text-slate-500">
+                        {comprobanteArchivo.name} ({(comprobanteArchivo.size / 1024 / 1024).toFixed(2)} MB)
+                      </p>
+                    )}
+                  </div>
                 )}
               </>
             ) : (
@@ -812,11 +843,11 @@ export default function NuevoPedidoPage() {
               <p className="text-lg font-bold text-slate-800">Total: S/ {total.toFixed(2)}</p>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" disabled={loading} onClick={() => guardar(false)}>
+              <Button variant="secondary" disabled={loading || subiendo} onClick={() => guardar(false)}>
                 Terminar después
               </Button>
-              <Button disabled={loading} onClick={() => guardar(true)}>
-                {loading ? "Procesando..." : "Guardar Pedido"}
+              <Button disabled={loading || subiendo} onClick={() => guardar(true)}>
+                {subiendo ? "Subiendo comprobante..." : loading ? "Procesando..." : "Guardar Pedido"}
               </Button>
             </div>
           </div>
