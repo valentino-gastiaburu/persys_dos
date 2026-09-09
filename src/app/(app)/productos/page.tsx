@@ -65,7 +65,7 @@ function ListaProductos() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [tipoActivo, setTipoActivo] = useState<string>("A");
-  const [vista, setVista] = useState<"almacen" | "ventas">("almacen");
+  const [vista, setVista] = useState<"almacen" | "ventas">("ventas");
 
   const cargar = useCallback(async () => {
     const [p, t] = await Promise.all([
