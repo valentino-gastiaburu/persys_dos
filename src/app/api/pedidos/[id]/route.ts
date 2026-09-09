@@ -260,8 +260,9 @@ export async function PATCH(
   }
 
   const { data: viajesExistentes } = await supabase
-    .from("viajes").select("id").eq("pedido_id", id).limit(1);
-  if ((viajesExistentes?.length ?? 0) > 0) {
+    .from("viajes").select("id, estado").eq("pedido_id", id);
+  const viajesActivos = (viajesExistentes ?? []).filter((v: any) => v.estado !== "cancelado");
+  if (viajesActivos.length > 0) {
     return Response.json({ error: "El pedido tiene viajes; editalo desde ahi" }, { status: 400 });
   }
 
@@ -295,6 +296,7 @@ export async function PATCH(
       .select("id")
       .eq("pedido_id", id)
       .eq("tipo", "entrega")
+      .neq("estado", "cancelado")
       .order("creado_el")
       .limit(1);
     const primerEntrega = viajes?.[0];

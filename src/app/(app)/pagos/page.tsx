@@ -241,6 +241,7 @@ function PagarModal({
     setLoading(true);
 
     let linkComprobante: string | undefined;
+    let comprobanteDriveId: string | undefined;
     if (comprobanteArchivo) {
       setSubiendo(true);
       const fd = new FormData();
@@ -248,6 +249,7 @@ function PagarModal({
       const { data, error: subidaErr } = await api<{
         ok: boolean;
         comprobante?: string;
+        drive_id?: string;
         error?: string;
       }>("/api/pagos/comprobante", { method: "POST", body: fd });
       if (subidaErr || !data?.ok || !data.comprobante) {
@@ -257,6 +259,7 @@ function PagarModal({
         return;
       }
       linkComprobante = data.comprobante;
+      comprobanteDriveId = data.drive_id;
     }
 
     const body: Record<string, unknown> = {
@@ -274,6 +277,9 @@ function PagarModal({
     setSubiendo(false);
     setLoading(false);
     if (err) {
+      if (comprobanteDriveId) {
+        void api(`/api/pagos/comprobante?drive_id=${comprobanteDriveId}`, { method: "DELETE" });
+      }
       setError(err);
       return;
     }

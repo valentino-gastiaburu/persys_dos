@@ -62,6 +62,30 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// DELETE /api/pagos/comprobante?drive_id=...
+// Borra de Drive un comprobante subido pero cuyo pago no llegó a registrarse
+// (ej. el POST del pago fue rechazado): evita archivos huérfanos en la carpeta.
+export async function DELETE(request: NextRequest) {
+  const { error } = await requireRoles(["vendedora", "agendadora", "controller", "admin"]);
+  if (error) return error;
+
+  const driveId = request.nextUrl.searchParams.get("drive_id");
+  if (!driveId) {
+    return Response.json({ error: "Falta drive_id" }, { status: 400 });
+  }
+
+  try {
+    const { getDrive } = await import("@/lib/drive");
+    await getDrive().files.delete({ fileId: driveId });
+    return Response.json({ ok: true });
+  } catch {
+    return Response.json(
+      { error: "No se pudo borrar el comprobante de Drive" },
+      { status: 500 }
+    );
+  }
+}
+
 function extDeImagen(mime: string): string {
   const m = mime.split("/")[1]?.toLowerCase();
   if (m === "jpeg") return ".jpg";

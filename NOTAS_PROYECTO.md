@@ -339,6 +339,13 @@ monto 189.80) → alistar 2 QRs → viaje alistado → enviado → terminado →
 - **`viaje_producto_unicos`**: `pendiente` → `alistado` (al escanear) → `enviado` (al enviar) →
   `devuelto` (al terminar recojo o via retorno-stock). Los VPU pendientes en viajes cancelados
   o recojos activos aparecen en la sección "Pendientes a regresar al stock".
+- **Edición de pedido con viajes cancelados** (fix 09/sep/2026, pedido A7JC19YN): al revertir
+  `confirmado`→`solicitado` el viaje queda `cancelado`. Un pedido se puede editar (productos y
+  datos) si **todos** sus viajes están `cancelado` (no existe viaje activo). Esto aplica:
+  visually en `pedidos/[id]/page.tsx` (`puedeEditar`/`todosViajesCancelados`) y en los guards de
+  la API (`PATCH /api/pedidos/[id]` y `PATCH`/`DELETE /api/pedidos/[id]/detalles/[detalleId]`),
+  que filtran `estado != "cancelado"`; si queda algún viaje activo → "El pedido tiene viajes;
+  editalo desde ahi".
 - **Edición de viaje alistado (VPU-aware)** (22/ago/2026):
   - Reducir cantidad con VPU asignado → exceso se pinta rojo, pasa a "Pendientes de devolver".
   - Eliminar (✕) con VPU → cantidad = 0, todos los VPUs quedan como pendientes de devolver.
