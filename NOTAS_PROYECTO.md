@@ -911,10 +911,10 @@ Drive. Desde la app se sube el archivo y queda en esa carpeta; en la web se pued
 - La app de Google **ya está PUBLICADA** (estado **Published**, tipo Externo, sin verificar).
   Como usa un scope **no sensible** (`drive.file`) y tiene 1 solo dominio y sin logo, Google **no
   exige verificación**. Consecuencias/consejos:
-  - El refresh token **ya no expira** (en Testing expiraba a los 7 días). Regenerado el
-    09/sep/2026 tras publicar; el nuevo está en `.env.local` pero **EN VERCEL TODAVÍA ESTÁ EL
-    VIEJO** → hay que actualizar `GOOGLE_DRIVE_REFRESH_TOKEN` en Vercel (dashboard → Settings →
-    Environment Variables) y hacer redeploy para que producción use el vigente.
+  - El refresh token **ya no expira** (en Testing expiraba a los 7 días). El vigente
+    (regenerado el 09/sep/2026 tras publicar) ya está **actualizado en Vercel también** —
+    lo cambió el usuario desde el dashboard (Settings → Environment Variables) y está en
+    producción. Mantener en sincronía con `.env.local` si se regenera de nuevo.
   - Al reautorizar, el aviso *"Google hasn't verified this app"* se muestra igual (app publicada
     sin verificar) → "Configuración avanzada → Ir a persys-dos (no segura)". Cosmético: solo lo
     ve la cuenta que autoriza, no los usuarios de Persys.
