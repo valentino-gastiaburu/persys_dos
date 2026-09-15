@@ -244,13 +244,19 @@ export async function listarCatalogoPublico(): Promise<CatalogoPublicoProducto[]
 // (NO reservan borrador, cancelado ni devuelto).
 export async function listarProductos() {
   const supabase = getSupabase();
-  const [{ data: productos }, { data: tallasRows }, stockVentas, conteo] =
+  const [{ data: productos }, { data: tallasRows }, { data: proveedores }, stockVentas, conteo] =
     await Promise.all([
       supabase.from("productos").select("*").neq("estado", "eliminado").order("nombre"),
       supabase.from("tallas").select("id, tipo, nombre"),
+      supabase.from("proveedores").select("id, nombre, telefono, comentario"),
       getStockVentasPorTalla(),
       getConteoPorTalla(),
     ]);
+
+  const proveedorInfo: Record<string, any> = {};
+  for (const p of proveedores ?? []) {
+    proveedorInfo[p.id] = p;
+  }
 
   const tallaTipo: Record<string, string> = {};
   const tallaNombre: Record<string, string> = {};
@@ -290,6 +296,7 @@ export async function listarProductos() {
     ...p,
     stock: stock[p.id] ?? {},
     stock_ventas: stockVentasNombres[p.id] ?? {},
+    proveedor: p.proveedor_id ? proveedorInfo[p.proveedor_id] ?? null : null,
   }));
 }
 

@@ -154,22 +154,21 @@ export async function tienePendientesRetiro(pedidoId: string): Promise<number> {
   return totalExceso;
 }
 
-// Total del pedido = Σ totales de viajes de entrega − Σ totales de viajes de
-// regreso (devoluciones). El costo de envío de un regreso es informativo y no
-// se descuenta.
+// Total del pedido = Σ totales de viajes de ENTREGA. Las devoluciones ya tienen
+// su valor restado del viaje de entrega origen (la línea original se reduce o
+// pasa a `oculto` al crear el recojo), así que los totales de los regresos son
+// informativos y NO se descuentan: restarlos de nuevo duplicaba la resta
+// (ej. pedido con 2 prendas de 99 y una devuelta daba 99 en vez de 198).
+// El costo de envío de un regreso es informativo y no se descuenta.
 export async function calcularTotalPedido(pedidoId: string): Promise<number> {
   const supabase = getSupabase();
   const { data: viajes } = await supabase
     .from("viajes")
-    .select("tipo, total")
+    .select("total")
     .eq("pedido_id", pedidoId)
+    .eq("tipo", "entrega")
     .neq("estado", "cancelado");
-  let total = 0;
-  for (const v of viajes ?? []) {
-    const t = Number(v.total ?? 0);
-    total += v.tipo === "recojo" ? -t : t;
-  }
-  return total;
+  return (viajes ?? []).reduce((acc, v) => acc + Number(v.total ?? 0), 0);
 }
 
 // Total de un viaje = suma de subtotales de sus líneas (no ocultas). En las
@@ -317,6 +316,7 @@ export async function confirmarPedido(
         fecha: pedido.fecha_entrega,
         direccion: pedido.direccion_entrega,
         costo_envio: Number(pedido.costo_envio ?? 0),
+        observaciones: pedido.observaciones || null,
         total: montoTotal,
         creado_por: userId,
       })

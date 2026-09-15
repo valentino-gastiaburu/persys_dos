@@ -321,8 +321,11 @@
   en `borrador`/`solicitado`/`cancelado`/`devuelto` (el primer viaje lo crea la
   confirmación). El `costo_envio` del viaje extra **sí suma** al total del pedido.
 - **Totales:** cada viaje tiene su propio `total` (`Σ subtotales + costo_envio` en
-  entregas). `monto_total` del pedido = Σ totales de **entregas − Σ totales de
-  regresos**, recalculado con `calcularTotalPedido` al crear/editar viajes.
+  entregas). `monto_total` del pedido = Σ totales de **entregas**. Al crear un recojo,
+  el valor devuelto ya se resta del viaje de entrega (la línea original reduce su
+  cantidad o pasa a `oculto`), por lo que los `total` de los regresos son
+  **informativos** y NO se restan (restarlos duplicaba la resta). Recalculado con
+  `calcularTotalPedido` al crear/editar viajes.
 - En el detalle, tras cada operación se regeneran `resumen_productos`, `monto_total`
   y el estado (regla de rank mínimo, ver §3).
 

@@ -33,7 +33,7 @@ export async function GET(
     .from("detalles_pedido")
     .select(`
       id, producto_id, talla_stock, talla_vendida, cantidad, precio_unitario, subtotal, es_extra_motorizado, entalle, estado, genero,
-      productos(imei, nombre), tallas!detalles_pedido_talla_vendida_fkey(nombre),
+      productos(imei, nombre, es_dropship), tallas!detalles_pedido_talla_vendida_fkey(nombre),
       tallas_stock: tallas!detalles_pedido_talla_stock_fkey(nombre)
     `)
     .eq("viaje_id", id)
@@ -68,6 +68,7 @@ export async function GET(
       producto_id: d.producto_id,
       imei: d.productos?.imei,
       nombre: d.productos?.nombre,
+      es_dropship: d.productos?.es_dropship === true,
       talla: d.tallas?.nombre ?? null,
       talla_id: d.talla_vendida,
       talla_stock: d.talla_stock ?? null,
@@ -148,7 +149,7 @@ export async function PATCH(
     // Si es recojo: encontrar detalles del recojo ANTES de desvincular
     let recojoIds: string[] = [];
     let origIds: string[] = [];
-    let origCantidades: Record<string, { cantidad: number; subtotal: number }> = {};
+    const origCantidades: Record<string, { cantidad: number; subtotal: number }> = {};
     if (viaje.tipo === "recojo") {
       const { data: recojoDetalles } = await supabase
         .from("detalles_pedido")
@@ -264,7 +265,7 @@ export async function PATCH(
     if (nuevoEstado === "alistado") {
       const { data: detalles } = await supabase
         .from("detalles_pedido")
-        .select("id, cantidad")
+        .select("id, cantidad, productos!inner(es_dropship)")
         .eq("viaje_id", id)
         .not("estado", "eq", "oculto");
       const { data: alistados } = await supabase
@@ -273,7 +274,11 @@ export async function PATCH(
         .eq("viaje_id", id);
       const contador: Record<string, number> = {};
       for (const a of alistados ?? []) contador[a.detalle_pedido_id] = (contador[a.detalle_pedido_id] ?? 0) + 1;
-      const incompleto = (detalles ?? []).some((d) => (contador[d.id] ?? 0) < Number(d.cantidad));
+      // Las líneas dropship no necesitan VPUs (se compran al proveedor al vender).
+      const incompleto = (detalles ?? []).some((d) => {
+        const esDrop = (d.productos as any)?.es_dropship === true;
+        return !esDrop && (contador[d.id] ?? 0) < Number(d.cantidad);
+      });
       if (incompleto) {
         return Response.json({ error: "Faltan unidades por alistar antes de marcar el viaje como alistado" }, { status: 400 });
       }
@@ -450,6 +455,7 @@ export async function PATCH(
   const patchData: Record<string, any> = {};
   if (body.fecha !== undefined) patchData.fecha = body.fecha;
   if (body.direccion !== undefined) patchData.direccion = body.direccion;
+  if (body.observaciones !== undefined) patchData.observaciones = body.observaciones ?? null;
 
   if (Object.keys(patchData).length > 0) {
     if (!esActivo) {
@@ -816,6 +822,7 @@ export async function PATCH(
   const camposEditados: string[] = [];
   if (body.fecha !== undefined) camposEditados.push("fecha");
   if (body.direccion !== undefined) camposEditados.push("direccion");
+  if (body.observaciones !== undefined) camposEditados.push("observaciones");
   if (body.lineas !== undefined) camposEditados.push("lineas");
   if (body.recojo_lineas !== undefined) camposEditados.push("recojo_lineas");
   if (camposEditados.length > 0) {

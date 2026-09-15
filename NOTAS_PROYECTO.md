@@ -1,7 +1,7 @@
 # Persys_dos — Contexto del proyecto
 
 > Bitácora resumida: decisiones del usuario, respuestas a preguntas y estado actual.
-> Última actualización: 08/sep/2026.
+> Última actualización: 15/sep/2026.
 
 ## Qué es Persys_dos
 
@@ -928,5 +928,87 @@ Drive. Desde la app se sube el archivo y queda en esa carpeta; en la web se pued
 - Migrar al Supabase de la empresa **no afecta nada de esto** (es Google Drive): solo cambian
   `SUPABASE_URL` y `SUPABASE_ANON_KEY`; las cuatro variables de Drive quedan igual (la cuenta de
   Google es del dev, no de Supabase).
+
+---
+
+## Dropshipping + Proveedores + Observaciones viaje — 15/sep/2026
+
+### Resumen funcional
+Productos **sin stock propio** (dropshipping): la app muestra foto, nombre, IMEI y un campo
+`detalles` (colores / tallas disponibles, texto libre). No se crea `producto_tallas`; el pedido
+puede incluir líneas dropship sin reservar stock y el viaje correspondiente **no requiere
+escaneo** en almacén (la línea aparece "completo" automáticamente).
+
+Cada producto dropshipping se asocia a un **proveedor** (`proveedores` tabla), que se gestiona
+desde la pestaña "Proveedores" de la sección Productos.
+
+Los **viajes** ahora aceptan un campo `observaciones` (texto libre) para indicar talla/color
+específica que la agendadora pide a almacén.
+
+### Tabla `proveedores`
+```
+proveedores
+  id              uuid PK DEFAULT gen_random_uuid()
+  nombre          text NOT NULL UNIQUE
+  telefono        text
+  comentario      text
+  creado_por      uuid FK→usuarios.id
+  creado_el       timestamptz DEFAULT now()
+```
+Creada en migración `supabase/24_dropship_proveedores.sql`.
+
+### Nuevas columnas en `productos`
+- `es_dropship` boolean NOT NULL DEFAULT false
+- `detalles` text (libre — colores, tallas disponibles, notas del proveedor)
+- `proveedor_id` uuid FK→proveedores(id)
+
+### Columna nueva en `viajes`
+- `observaciones` text — se almacena al crear el viaje (POST) y se puede editar (PATCH).
+
+### Subida de foto de producto (Google Drive)
+Se reutiliza **la misma carpeta** de comprobantes de pago (`DRIVE_COMPROBANTES_FOLDER_ID`). Cada
+foto de producto se guarda como archivo `producto-{IMEI}.{ext}` en esa carpeta. La función
+`subirComprobante()` de `src/lib/drive.ts` es reutilizada sin cambios.
+
+- **POST** `/api/productos/foto` (FormData: `archivo` + `imei`) → sube como
+  `producto-{sanitized_imei}{ext}` y devuelve `{ foto_url, drive_id }`.
+- **DELETE** `/api/productos/foto?drive_id=<id>` → elimina el archivo del Drive.
+
+### Flujo de almacén (alistado / envío)
+- Las líneas dropship **no aparecen** en la tabla de escaneo: se renderizan como una fila
+  especial con badge "Dropship · sin escaneo" y estado "completo" automático.
+- El gate de alistado (`PATCH /api/viajes/[id]`) **excluye** líneas dropship del conteo de
+  VPUs pendientes, así que un viaje solo-dropship puede pasarse a alistado/enviado sin escanear.
+- Los pendientes de escaneo (`/api/viajes/[id]/pendientes`) solo retornan líneas con VPUs
+  físicos (excluye `productos.es_dropship = true`).
+
+### Tabs de Productos (UI)
+- **Lista**: segmentador "Con stock / Dropshipping"; vista `VistaDropship` con tarjetas grandes
+  con foto del producto (click → pestaña Editar).
+- **Crear**: toggle "Producto con stock / Producto externo (dropshipping)". Dropship:
+  FotoUpload + textarea detalles + selector de proveedor ("+ Nuevo proveedor" abre modal inline).
+- **Editar**: búsqueda por nombre/IMEI, 2 paneles (lista + formulario). Formulario
+  dropship-aware (sin selector de tallas; textarea detalles, selector proveedor).
+- **Proveedores**: CRUD completo con tabla, modal de edición y confirmación de eliminación
+  (solo si 0 productos asociados).
+
+### Archivos involucrados
+- `supabase/24_dropship_provideedores.sql` — migración (tabla + ALTER + check constraint)
+- `src/lib/auditoria.ts` — `EntidadAuditoria` incluye `"proveedor"`
+- `src/app/api/proveedores/route.ts` — GET (con conteo `n_productos`) + POST
+- `src/app/api/proveedores/[id]/route.ts` — PATCH + DELETE
+- `src/app/api/productos/foto/route.ts` — POST + DELETE
+- `src/app/api/productos/route.ts` — POST acepta `es_dropship`, `detalles`, `proveedor_id`
+- `src/app/api/productos/[id]/route.ts` — PATCH acepta `detalles`, `proveedor_id`, protege
+  `tipo_talla` para dropship
+- `src/lib/productos.ts` — `listarProductos` incluye `proveedor` (join a `proveedores`)
+- `src/app/api/viajes/route.ts` — POST incluye `observaciones`
+- `src/app/api/viajes/[id]/route.ts` — PATCH acepta `observaciones`; gate de alistado excluye
+  dropship; items incluyen `es_dropship`
+- `src/lib/pedidos.ts` — `confirmarPedido()` copia `pedido.observaciones` al primer viaje
+- `src/app/(app)/productos/page.tsx` — UI 4 tabs reescrita
+- `src/app/(app)/pedidos/[id]/page.tsx` — observaciones en modales de viaje + ViajeCard
+- `src/components/ViajeDetalle.tsx` — observaciones en header; filas dropship auto-completo
+- `NOTAS_PROYECTO.md` — esta sección
 
 

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requireRoles } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
 import { registrarAuditoria } from "@/lib/auditoria";
-import { syncEstadoPedidoPorViajes } from "@/lib/pedidos";
+import { syncEstadoPedidoPorViajes, calcularTotalPedido } from "@/lib/pedidos";
 
 // Marca el viaje de recojo como terminado (devolución completa) y sincroniza
 // el estado del pedido según las entregas restantes.
@@ -10,9 +10,26 @@ async function finalizarRecojo(
   supabase: ReturnType<typeof getSupabase>,
   viaje: { id: string; pedido_id: string | null }
 ) {
-  await supabase.from("viajes").update({ estado: "terminado" }).eq("id", viaje.id);
+  await supabase
+    .from("viajes")
+    .update({ estado: "terminado", fecha_devolucion: new Date().toISOString() })
+    .eq("id", viaje.id);
   if (viaje.pedido_id) {
-    await syncEstadoPedidoPorViajes(viaje.pedido_id);
+    await supabase
+      .from("detalles_pedido")
+      .update({ estado: "devuelto" })
+      .eq("viaje_id", viaje.id)
+      .eq("estado", "pendiente_devolucion");
+    // Paridad con el PATCH: persiste el estado del pedido. El resultado de
+    // syncEstadoPedidoPorViajes antes se descartaba, así que el pedido quedaba
+    // congelado en "esperando_devolucion" aunque el recojo ya estuviera terminado.
+    // (El monto no cambia aquí: la devolución ya se restó del viaje de entrega
+    //  origen al crear el recojo.)
+    const nuevoEstadoPedido = await syncEstadoPedidoPorViajes(viaje.pedido_id);
+    await supabase
+      .from("pedidos")
+      .update({ estado: nuevoEstadoPedido })
+      .eq("id", viaje.pedido_id);
   }
 }
 

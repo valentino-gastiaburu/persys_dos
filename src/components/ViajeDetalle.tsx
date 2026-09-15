@@ -18,6 +18,7 @@ type Item = {
   detalle_id: string;
   imei: string;
   nombre: string;
+  es_dropship: boolean;
   talla: string | null;
   talla_stock: string | null;
   talla_stock_nombre: string | null;
@@ -55,6 +56,7 @@ type Viaje = {
   retrasado?: boolean;
   fecha: string | null;
   fecha_devolucion: string | null;
+  observaciones: string | null;
 };
 
 type StockDisponible = {
@@ -383,8 +385,11 @@ export default function ViajeDetalle() {
 
   const totalUnidades = items.reduce((a, i) => a + i.cantidad, 0);
   const totalAlistadas = items.reduce((a, i) => a + i.alistados, 0) + pendientes.length;
+  // Las líneas dropship no requieren escaneo (no hay producto físico): no cuentan como incompletas.
   const incompleto = items.some(
-    (i) => i.alistados + pendientes.filter((p) => p.detalle_id === i.detalle_id).length < i.cantidad
+    (i) =>
+      !i.es_dropship &&
+      i.alistados + pendientes.filter((p) => p.detalle_id === i.detalle_id).length < i.cantidad
   );
   const activo = viaje.estado === "programado" || viaje.estado === "alistado";
 
@@ -476,6 +481,11 @@ export default function ViajeDetalle() {
             <p className="mt-1 text-sm text-slate-500">
               Recojo · Pedido {pedidoCodigo ?? "—"} · {clienteNombre ?? "Sin cliente"}
             </p>
+            {viaje.observaciones && (
+              <p className="mt-2 inline-block rounded-lg bg-amber-50 px-3 py-1.5 text-xs italic text-amber-700">
+                📝 {viaje.observaciones}
+              </p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-sm text-slate-600">
@@ -693,6 +703,11 @@ export default function ViajeDetalle() {
             {viaje.tipo === "recojo" ? "Recojo" : "Entrega"} · Pedido {pedidoCodigo ?? "—"} ·{" "}
             {clienteNombre ?? "Sin cliente"}
           </p>
+          {viaje.observaciones && (
+            <p className="mt-2 inline-block rounded-lg bg-amber-50 px-3 py-1.5 text-xs italic text-amber-700">
+              📝 {viaje.observaciones}
+            </p>
+          )}
         </div>
         <div className="text-right">
           <p className="text-sm text-slate-600">
@@ -892,6 +907,34 @@ export default function ViajeDetalle() {
             </thead>
             <tbody>
               {items.map((item) => {
+                if (item.es_dropship) {
+                  return (
+                    <tr key={item.detalle_id} className="border-b border-slate-200 bg-cyan-50 last:border-b-0">
+                      <td className="border-r border-b border-slate-200 px-3 py-2 font-mono text-xs text-slate-500 align-middle">
+                        {item.imei ?? "—"}
+                      </td>
+                      <td className="border-r border-b border-slate-200 px-3 py-2 align-middle">
+                        <span className="text-slate-400">Sin talla</span>
+                      </td>
+                      <td className="border-r border-b border-slate-200 px-3 py-2 align-middle">
+                        <span className="font-semibold text-slate-800">{item.cantidad}/{item.cantidad}</span>
+                      </td>
+                      <td className="border-r border-b border-slate-200 px-3 py-2 align-middle text-slate-400">
+                        —
+                      </td>
+                      <td className="border-r border-b border-slate-200 px-3 py-2.5 align-middle">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-semibold text-cyan-700">
+                          Dropship · sin escaneo
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+                        <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                          completo
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                }
                 const grupos = unidadesPorDetalle.get(item.detalle_id);
                 const bdUnits = grupos?.bd ?? [];
                 const localUnits = grupos?.local ?? [];

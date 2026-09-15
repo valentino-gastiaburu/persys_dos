@@ -11,7 +11,8 @@ export type EntidadAuditoria =
   | "pedido"
   | "viaje"
   | "detalle_pedido"
-  | "pago";
+  | "pago"
+  | "proveedor";
 
 export type RegistrarAuditoriaParams = {
   user: SessionUser;

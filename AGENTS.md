@@ -104,6 +104,30 @@ edicion multiple), coincidiendo con pausas largas (build/latencia). Si notas que
 emitir un bloque de herramienta con parametros vacios o repitiendo el mismo, para y genera la
 llamada correcta de una sola vez.
 
+## Aprendizajes grandes (leer antes de tocar la BD)
+
+- **NUNCA inventar columnas/tablas de memoria o del historial de la conversación.**
+  Antes de escribir cualquier script o SQL contra la BD, leer el schema real
+  (`supabase/02_schema.sql` + migraciones `supabase/2*.sql`) y verificar nombre de
+  columnas, enums y FKs. Ya pasó: se generaron scripts con columnas fantasma
+  (`codigo_qr` en join erróneo) y códigos de pedido solo anotados, sin contrastar.
+- **En Persys_dos no hay RLS**: la ANON key puede escribir desde un script Node
+  (con `NODE_PATH` al node_modules del proyecto). No pedir al usuario que corra
+  queries para datos de prueba.
+- **Mapa de FKs al borrar pedidos/viajes** (verificado en `02_schema.sql`):
+  - `detalles_pedido.pedido_id` y `viaje_producto_unicos.viaje_id`: **ON DELETE CASCADE**.
+  - `detalles_pedido.viaje_id`, `viajes.pedido_id`, `historial_producto_unicos.*`:
+    FKs **SIN cascade** → desvincular con `NULL` antes de borrar (historial de stock
+    se conserva así) o el DELETE falla.
+  - `historial_pedidos.pedido_id`: cascade (se borra solo).
+  - `movimientos_stock.referencia_id`: uuid libre sin FK (se conserva solo).
+  - Orden seguro: restaurar productos_unicos → NULL en historial_producto_unicos →
+    borrar viajes → borrar pedidos.
+- **PostgREST**: `update/delete` devuelve `.count` solo con `.select()`; los filtros
+  `.or()` con UUIDs se escriben `in.(id1,id2,…)` **sin comillas**.
+- Los scripts one-off destructivos no se dejan en la raíz del proyecto: correrlos
+  desde `%TEMP%\opencode` y borrarlos al terminar.
+
 ## Reglas de consistencia de estado viaje ↔ VPUs
 
 - Un viaje `alistado` SIN VPUs activos es inconsistente → revertir a `programado`.

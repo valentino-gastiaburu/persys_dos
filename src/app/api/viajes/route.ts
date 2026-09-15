@@ -96,6 +96,7 @@ export async function POST(request: NextRequest) {
         fecha: body.fecha || new Date().toISOString().slice(0, 10),
         direccion,
         costo_envio: costoEnvio,
+        observaciones: body.observaciones ? String(body.observaciones).trim() : null,
         total: 0,
         creado_por: user.id,
       })
@@ -202,6 +203,7 @@ export async function POST(request: NextRequest) {
       estado: "programado",
       fecha: body.fecha || new Date().toISOString().slice(0, 10),
       costo_envio: 0,
+      observaciones: body.observaciones ? String(body.observaciones).trim() : null,
       total: 0,
       creado_por: user.id,
     })

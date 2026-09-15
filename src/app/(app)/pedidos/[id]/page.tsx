@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { Button, Input, Select, Badge, Modal, Spinner, ErrorBanner } from "@/components/ui";
+import { Button, Input, Select, Badge, Modal, Spinner, ErrorBanner, Textarea } from "@/components/ui";
 
 const ESTADO_BADGE: Record<string, string> = {
   borrador: "slate",
@@ -137,6 +137,7 @@ type Viaje = {
   fecha: string | null;
   fecha_devolucion: string | null;
   direccion: string | null;
+  observaciones: string | null;
   costo_envio: number;
   total: number;
   creado_el: string | null;
@@ -703,7 +704,7 @@ export default function PedidoDetallePage() {
               )}
               <div className="mt-4 flex justify-between border-t border-slate-300 pt-3 text-sm">
                 <span className="text-slate-500">
-                  Total {pedido.estado === "cancelado" ? "(incluye envío)" : !puedeEditar ? "(entregas − devoluciones)" : "(incluye envío)"}
+                  Total {pedido.estado === "cancelado" ? "(incluye envío)" : !puedeEditar ? "(entregas)" : "(incluye envío)"}
                 </span>
                 <span className="font-bold text-slate-800">S/ {Number(pedido.monto_total).toFixed(2)}</span>
               </div>
@@ -1129,6 +1130,7 @@ function EditarViajeModal({
 }) {
   const [fecha, setFecha] = useState(viaje.fecha ?? new Date().toISOString().slice(0, 10));
   const [direccion, setDireccion] = useState(viaje.direccion ?? "");
+  const [observaciones, setObservaciones] = useState(viaje.observaciones ?? "");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -1375,7 +1377,7 @@ function EditarViajeModal({
       return;
     }
     setLoading(true);
-    const body: Record<string, any> = { fecha, direccion: direccion || null };
+    const body: Record<string, any> = { fecha, direccion: direccion || null, observaciones: observaciones.trim() || null };
 
     if (esRecojo) {
       const seleccionados = lineas
@@ -1494,6 +1496,13 @@ function EditarViajeModal({
           <Input label="Fecha del viaje" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
           <Input label="Dirección" value={direccion} onChange={(e) => setDireccion(e.target.value)} />
         </div>
+        <Textarea
+          label="Observaciones del viaje (color, talla, indicaciones...)"
+          value={observaciones}
+          onChange={(e) => setObservaciones(e.target.value)}
+          rows={2}
+          placeholder="Ej: Vestido rosa, talla M"
+        />
 
         {viaje.tipo === "entrega" && (
           <>
@@ -2115,6 +2124,11 @@ function ViajeCard({
           </div>
         )}
         {viaje.direccion && <p className="mb-2 text-xs text-slate-500">Dirección: {viaje.direccion}</p>}
+        {viaje.observaciones && (
+          <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs italic text-amber-700">
+            📝 {viaje.observaciones}
+          </p>
+        )}
         {esRegreso && (
           <div className="mb-2 flex flex-wrap gap-3 text-xs">
             <span className="text-slate-500">
@@ -2269,6 +2283,7 @@ function NuevoViajeEntregaModal({
     pedido.fecha_entrega ?? new Date().toISOString().slice(0, 10)
   );
   const [direccion, setDireccion] = useState(pedido.direccion_entrega ?? "");
+  const [observaciones, setObservaciones] = useState(pedido.observaciones ?? "");
   const [costoEnvio, setCostoEnvio] = useState("");
   const [productos, setProductos] = useState<{ id: string; imei: string; nombre: string }[]>([]);
   const [tallasPorProducto, setTallasPorProducto] = useState<
@@ -2403,6 +2418,7 @@ function NuevoViajeEntregaModal({
         tipo: "entrega",
         fecha,
         direccion: direccion || null,
+        observaciones: observaciones.trim() || null,
         costo_envio: Number(costoEnvio || 0),
         lineas: lineas.map((l) => ({
           producto_id: l.producto_id,
@@ -2446,6 +2462,13 @@ function NuevoViajeEntregaModal({
           </div>
           <Input label="Costo de envío (S/)" type="number" step="0.01" value={costoEnvio} onChange={(e) => setCostoEnvio(e.target.value)} />
         </div>
+        <Textarea
+          label="Observaciones del viaje (color, talla, indicaciones...)"
+          value={observaciones}
+          onChange={(e) => setObservaciones(e.target.value)}
+          rows={2}
+          placeholder="Ej: Vestido rosa, talla M"
+        />
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-700">
             Agregar producto
@@ -2553,6 +2576,7 @@ function ViajeRegresoModal({
 }) {
   const [motivo, setMotivo] = useState("devolucion");
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [observaciones, setObservaciones] = useState("");
   const [lineas, setLineas] = useState<LineaRegreso[]>(() =>
     detalles.map((d) => ({
       detalle_id: d.id,
@@ -2595,6 +2619,7 @@ function ViajeRegresoModal({
         tipo: "recojo",
         motivo,
         fecha,
+        observaciones: observaciones.trim() || null,
         lineas: elegidas.map((l) => ({
           detalle_id: l.detalle_id,
           cantidad: l.cantidad,
@@ -2635,6 +2660,13 @@ function ViajeRegresoModal({
             onChange={(e) => setFecha(e.target.value)}
           />
         </div>
+        <Textarea
+          label="Observaciones del viaje (motivo, estado, indicaciones...)"
+          value={observaciones}
+          onChange={(e) => setObservaciones(e.target.value)}
+          rows={2}
+          placeholder="Ej: Talla no llegó, se cambia por S"
+        />
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
           Al crear el regreso, los productos salen del viaje de entrega y quedan pendientes de
           devolución en este viaje. La unidad devuelta vuelve al almacén con su talla actual.

@@ -63,12 +63,37 @@ export async function PATCH(
     campos.push("imagen");
   }
 
+  if (body.detalles !== undefined) {
+    const detalles = body.detalles === null ? null : String(body.detalles).trim();
+    if (detalles !== actual.detalles) {
+      updates.detalles = detalles;
+      campos.push("detalles");
+    }
+  }
+
+  if (body.proveedor_id !== undefined && body.proveedor_id !== actual.proveedor_id) {
+    if (body.proveedor_id === null) {
+      updates.proveedor_id = null;
+    } else {
+      const { data: prov } = await supabase
+        .from("proveedores")
+        .select("id")
+        .eq("id", String(body.proveedor_id))
+        .maybeSingle();
+      if (!prov) {
+        return Response.json({ error: "El proveedor seleccionado no existe" }, { status: 400 });
+      }
+      updates.proveedor_id = body.proveedor_id;
+    }
+    campos.push("proveedor_id");
+  }
+
   if (body.precio_referencial !== undefined && Number(body.precio_referencial) !== Number(actual.precio_referencial)) {
     updates.precio_referencial = Number(body.precio_referencial);
     campos.push("precio_referencial");
   }
 
-  if (body.tipo_talla !== undefined && body.tipo_talla !== actual.tipo_talla) {
+  if (body.tipo_talla !== undefined && body.tipo_talla !== actual.tipo_talla && !actual.es_dropship) {
     const tipo = String(body.tipo_talla);
     if (!TIPO_TALLA_TIPOS[tipo]) {
       return Response.json({ error: "Tipo de talla inválido" }, { status: 400 });

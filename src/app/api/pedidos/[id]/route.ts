@@ -289,7 +289,7 @@ export async function PATCH(
 
   // Si cambia el costo de envío, recalcular el monto_total. El total vive en el
   // viaje de entrega original (pedido = colección de viajes): se actualiza su
-  // costo_envio y total, y monto_total = Σ entregas − Σ regresos.
+  // costo_envio y total, y monto_total = Σ entregas (los regresos no restan).
   if (updates.costo_envio !== undefined && body.monto_total === undefined) {
     const { data: viajes } = await supabase
       .from("viajes")

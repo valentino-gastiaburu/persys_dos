@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { api, useSesion } from "@/lib/api";
-import { Button, Input, Spinner, ErrorBanner } from "@/components/ui";
+import { Button, Input, Spinner, ErrorBanner, Select, Textarea, Modal, Badge, EmptyState } from "@/components/ui";
 import { TIPO_TALLA_TIPOS, TIPO_TALLA_LABEL } from "@/lib/productos";
 
 type Producto = {
@@ -13,8 +13,20 @@ type Producto = {
   precio_referencial: number;
   foto_url: string | null;
   estado: string;
+  es_dropship: boolean;
+  detalles: string | null;
+  proveedor_id: string | null;
+  proveedor: { id: string; nombre: string; telefono: string | null; comentario: string | null } | null;
   stock: Record<string, Record<string, number>>;
   stock_ventas: Record<string, Record<string, number>>;
+};
+
+type Proveedor = {
+  id: string;
+  nombre: string;
+  telefono: string | null;
+  comentario: string | null;
+  n_productos?: number;
 };
 
 type Talla = { id: string; nombre: string; tipo: string };
@@ -22,6 +34,8 @@ type Talla = { id: string; nombre: string; tipo: string };
 const TABS = [
   { id: "lista", label: "Lista" },
   { id: "crear", label: "Crear producto nuevo" },
+  { id: "editar", label: "Editar" },
+  { id: "proveedores", label: "Proveedores" },
 ] as const;
 
 const TIPOS_TABLA = ["A", "B", "C"] as const;
@@ -29,17 +43,21 @@ const OPCIONES_TALLA = ["A", "B", "C"] as const;
 
 export default function ProductosPage() {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("lista");
+  const [editarProductoId, setEditarProductoId] = useState<string | null>(null);
 
   return (
     <div>
       <h1 className="mb-4 text-2xl font-bold text-slate-800">Productos</h1>
 
-      <div className="mb-6 flex gap-1 border-b border-slate-200">
+      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-slate-200">
         {TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+            onClick={() => {
+              setTab(t.id);
+              if (t.id !== "editar") setEditarProductoId(null);
+            }}
+            className={`whitespace-nowrap rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
               tab === t.id
                 ? "border-blue-600 text-blue-700"
                 : "border-transparent text-slate-500 hover:text-slate-700"
@@ -50,13 +68,180 @@ export default function ProductosPage() {
         ))}
       </div>
 
-      {tab === "lista" && <ListaProductos />}
+      {tab === "lista" && (
+        <ListaProductos onEditar={(id) => { setEditarProductoId(id); setTab("editar"); }} />
+      )}
       {tab === "crear" && <CrearProducto onCreado={() => setTab("lista")} />}
+      {tab === "editar" && <EditarProductos productoSel={editarProductoId} />}
+      {tab === "proveedores" && <ProveedoresTab />}
     </div>
   );
 }
 
-function ListaProductos() {
+// ─── Helpers de proveedores ────────────────────────────────────
+
+function useListaProveedores() {
+  const [proveedores, setProveedores] = useState<Proveedor[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const cargar = useCallback(async () => {
+    const res = await api<{ proveedores: Proveedor[] }>("/api/proveedores");
+    if (res.error) setError(res.error);
+    else setProveedores(res.data?.proveedores ?? []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    cargar();
+  }, [cargar]);
+
+  return { proveedores, loading, error, recargar: cargar };
+}
+
+function FormProveedor({
+  inicial,
+  onGuardado,
+  onCancel,
+}: {
+  inicial?: Proveedor | null;
+  onGuardado: (p: Proveedor) => void;
+  onCancel?: () => void;
+}) {
+  const [nombre, setNombre] = useState(inicial?.nombre ?? "");
+  const [telefono, setTelefono] = useState(inicial?.telefono ?? "");
+  const [comentario, setComentario] = useState(inicial?.comentario ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const esEdicion = Boolean(inicial?.id);
+
+  async function guardar() {
+    setError(null);
+    if (!nombre.trim()) {
+      setError("El nombre del proveedor es obligatorio.");
+      return;
+    }
+    setLoading(true);
+    const { data, error } = await api<{ proveedor: Proveedor }>(
+      esEdicion ? `/api/proveedores/${inicial!.id}` : "/api/proveedores",
+      {
+        method: esEdicion ? "PATCH" : "POST",
+        body: JSON.stringify({
+          nombre,
+          telefono: telefono.trim() || null,
+          comentario: comentario.trim() || null,
+        }),
+      }
+    );
+    setLoading(false);
+    if (error) {
+      setError(error);
+      return;
+    }
+    if (data?.proveedor) onGuardado({ ...data.proveedor, n_productos: inicial?.n_productos ?? 0 });
+  }
+
+  return (
+    <div className="space-y-4">
+      <Input label="Nombre *" value={nombre} onChange={(e) => setNombre(e.target.value)} required />
+      <Input label="Teléfono (opcional)" value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: 999 888 777" />
+      <Textarea label="Comentario (opcional)" value={comentario} onChange={(e) => setComentario(e.target.value)} rows={3} placeholder="Notas, observaciones, plazos..." />
+      <ErrorBanner message={error} />
+      <div className="flex justify-end gap-2">
+        {onCancel && (
+          <Button variant="secondary" onClick={onCancel}>
+            Cancelar
+          </Button>
+        )}
+        <Button onClick={guardar} disabled={loading} variant={esEdicion ? "secondary" : "primary"}>
+          {loading ? "Guardando..." : esEdicion ? "Guardar cambios" : "Crear proveedor"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Subida de foto a Drive ────────────────────────────────────
+
+function FotoUpload({
+  valor,
+  onChange,
+  imei,
+  label = "Foto",
+}: {
+  valor: string | null;
+  onChange: (url: string | null) => void;
+  imei: string;
+  label?: string;
+}) {
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function subir(file: File) {
+    setError(null);
+    if (!imei.trim()) {
+      setError("Escribe primero el IMEI del producto para poder subir la foto.");
+      return;
+    }
+    setSubiendo(true);
+    const form = new FormData();
+    form.append("archivo", file);
+    form.append("imei", imei.trim());
+    const res = await api<{ foto_url: string; drive_id: string }>("/api/productos/foto", {
+      method: "POST",
+      body: form,
+    });
+    setSubiendo(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    if (res.data?.foto_url) onChange(res.data.foto_url);
+  }
+
+  return (
+    <div>
+      <span className="mb-1 block font-medium text-slate-700">{label}</span>
+      <div className="flex items-start gap-3">
+        <label className="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+          {subiendo ? "Subiendo..." : valor ? "Cambiar foto" : "Subir foto"}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={subiendo}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) subir(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        {valor && (
+          <Button variant="ghost" size="sm" onClick={() => onChange(null)}>
+            Quitar foto
+          </Button>
+        )}
+      </div>
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      {valor && (
+        <div className="mt-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={valor}
+            alt="Foto del producto"
+            className="h-40 w-32 rounded-lg border border-slate-200 object-cover"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Lista ─────────────────────────────────────────────────────
+
+function ListaProductos({ onEditar }: { onEditar: (id: string) => void }) {
   const { user: sesion } = useSesion();
   const esAdmin = sesion?.rol === "controller" || sesion?.rol === "admin";
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -66,6 +251,7 @@ function ListaProductos() {
   const [search, setSearch] = useState("");
   const [tipoActivo, setTipoActivo] = useState<string>("A");
   const [vista, setVista] = useState<"almacen" | "ventas">("ventas");
+  const [modo, setModo] = useState<"stock" | "dropship">("stock");
 
   const cargar = useCallback(async () => {
     const [p, t] = await Promise.all([
@@ -104,10 +290,13 @@ function ListaProductos() {
     [productos, q]
   );
 
-  const enTipo = (tipo: string) =>
-    filtrados.filter((p) => (TIPO_TALLA_TIPOS[p.tipo_talla] ?? []).includes(tipo));
+  const conStock = useMemo(() => filtrados.filter((p) => !p.es_dropship), [filtrados]);
+  const dropship = useMemo(() => filtrados.filter((p) => p.es_dropship), [filtrados]);
 
-  const sinTalla = filtrados.filter(
+  const enTipo = (tipo: string) =>
+    conStock.filter((p) => (TIPO_TALLA_TIPOS[p.tipo_talla] ?? []).includes(tipo));
+
+  const sinTalla = conStock.filter(
     (p) => (TIPO_TALLA_TIPOS[p.tipo_talla] ?? []).length === 0
   );
 
@@ -120,31 +309,57 @@ function ListaProductos() {
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
-        <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
-          {(
-            [
-              { id: "almacen", label: "Stock almacén" },
-              { id: "ventas", label: "Stock ventas" },
-            ] as const
-          ).map((v) => (
-            <button
-              key={v.id}
-              onClick={() => setVista(v.id)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                vista === v.id
-                  ? "bg-white text-blue-700 shadow-sm"
-                  : "text-slate-500 hover:text-slate-700"
-              }`}
-            >
-              {v.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          {modo === "stock" && (
+            <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+              {(
+                [
+                  { id: "almacen", label: "Stock almacén" },
+                  { id: "ventas", label: "Stock ventas" },
+                ] as const
+              ).map((v) => (
+                <button
+                  key={v.id}
+                  onClick={() => setVista(v.id)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    vista === v.id
+                      ? "bg-white text-blue-700 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+            {(
+              [
+                { id: "stock", label: "Con stock" },
+                { id: "dropship", label: "Dropshipping" },
+              ] as const
+            ).map((v) => (
+              <button
+                key={v.id}
+                onClick={() => setModo(v.id)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  modo === v.id
+                    ? "bg-white text-blue-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <ErrorBanner message={error} />
 
       {loading ? (
         <Spinner />
+      ) : modo === "dropship" ? (
+        <VistaDropship productos={dropship} onEditar={onEditar} />
       ) : (
         <>
           {/* Móvil / pantallas chicas: pestañas de talla */}
@@ -192,6 +407,56 @@ function ListaProductos() {
     </div>
   );
 }
+
+function VistaDropship({ productos, onEditar }: { productos: Producto[]; onEditar: (id: string) => void }) {
+  if (productos.length === 0) {
+    return (
+      <EmptyState
+        title="No hay productos dropshipping"
+        subtitle="Créalos en la pestaña 'Crear producto nuevo' marcando 'Producto externo'"
+      />
+    );
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {productos.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => onEditar(p.id)}
+          className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white text-left shadow-sm transition-colors hover:border-blue-400 hover:shadow"
+        >
+          <div className="flex h-44 items-center justify-center bg-slate-100">
+            {p.foto_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={p.foto_url} alt={p.nombre} className="h-full w-full object-cover" />
+            ) : (
+              <span className="text-xs text-slate-400">Sin foto</span>
+            )}
+          </div>
+          <div className="flex flex-1 flex-col gap-1 p-3">
+            <div className="flex items-start justify-between gap-2">
+              <span className="font-semibold leading-snug text-slate-800">{p.nombre}</span>
+              <Badge color="blue">Dropship</Badge>
+            </div>
+            <span className="font-mono text-xs text-slate-500">{p.imei}</span>
+            {p.detalles && <p className="mt-1 text-sm text-slate-600">{p.detalles}</p>}
+            <div className="mt-auto pt-2">
+              {p.proveedor ? (
+                <Badge color="purple">{p.proveedor.nombre}</Badge>
+              ) : (
+                <span className="text-xs text-slate-400">Sin proveedor</span>
+              )}
+            </div>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Tabla de stock (sin cambios funcionales) ─────────────────
 
 function TablaTipo({
   tipo,
@@ -333,7 +598,10 @@ function TablaTipo({
   );
 }
 
+// ─── Crear ─────────────────────────────────────────────────────
+
 function CrearProducto({ onCreado }: { onCreado: () => void }) {
+  const [esDropship, setEsDropship] = useState(false);
   const [imei, setImei] = useState("");
   const [nombre, setNombre] = useState("");
   const [seleccion, setSeleccion] = useState<Record<string, boolean>>({
@@ -342,10 +610,15 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
     C: false,
   });
   const [precio, setPrecio] = useState("");
-  const [fotoUrl, setFotoUrl] = useState("");
+  const [fotoUrl, setFotoUrl] = useState<string | null>(null);
+  const [detalles, setDetalles] = useState("");
+  const [proveedorId, setProveedorId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [creado, setCreado] = useState<string | null>(null);
+
+  const { proveedores, recargar } = useListaProveedores();
+  const [modalNuevoProveedor, setModalNuevoProveedor] = useState(false);
 
   const tipoTalla = useMemo(
     () => OPCIONES_TALLA.filter((t) => seleccion[t]).join(""),
@@ -355,7 +628,7 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
   async function guardar() {
     setError(null);
     setCreado(null);
-    if (!tipoTalla) {
+    if (!esDropship && !tipoTalla) {
       setError("Selecciona al menos un tipo de talla.");
       return;
     }
@@ -365,9 +638,12 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
       body: JSON.stringify({
         imei,
         nombre,
-        tipo_talla: tipoTalla,
+        tipo_talla: esDropship ? "sin_talla" : tipoTalla,
         precio_referencial: Number(precio || 0),
-        foto_url: fotoUrl.trim() || null,
+        foto_url: fotoUrl?.trim() || null,
+        es_dropship: esDropship,
+        detalles: esDropship ? detalles.trim() || null : null,
+        proveedor_id: esDropship && proveedorId ? proveedorId : null,
       }),
     });
     setLoading(false);
@@ -377,48 +653,87 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
     }
     const p = data?.producto;
     setCreado(
-      p ? `${p.nombre} creado con 0 unidades en todas sus tallas.` : "Producto creado."
+      p
+        ? `${p.nombre} creado${esDropship ? " como producto dropshipping" : " con 0 unidades en todas sus tallas"}.`
+        : "Producto creado."
     );
     setImei("");
     setNombre("");
     setSeleccion({ A: false, B: false, C: false });
     setPrecio("");
     setFotoUrl("");
+    setDetalles("");
+    setProveedorId("");
   }
 
   return (
     <div className="max-w-xl">
+      <div className="mb-4">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setEsDropship(false)}
+            className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+              !esDropship
+                ? "border-blue-600 bg-blue-600 text-white"
+                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            Producto con stock
+          </button>
+          <button
+            type="button"
+            onClick={() => setEsDropship(true)}
+            className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+              esDropship
+                ? "border-blue-600 bg-blue-600 text-white"
+                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            Producto externo (dropshipping)
+          </button>
+        </div>
+      </div>
+
       <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        {esDropship && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            Sin stock físico: se compra al proveedor al momento de la venta. El comentario de
+            talla/color va en el viaje al agendar.
+          </div>
+        )}
         <Input label="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} required />
         <Input label="IMEI" value={imei} onChange={(e) => setImei(e.target.value)} required />
 
-        <div>
-          <span className="mb-1 block font-medium text-slate-700">Tipo de talla</span>
-          <div className="flex flex-wrap gap-2">
-            {OPCIONES_TALLA.map((tipo) => (
-              <button
-                key={tipo}
-                type="button"
-                onClick={() => setSeleccion((s) => ({ ...s, [tipo]: !s[tipo] }))}
-                className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
-                  seleccion[tipo]
-                    ? "border-blue-600 bg-blue-600 text-white"
-                    : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                Talla {tipo}
-              </button>
-            ))}
+        {!esDropship && (
+          <div>
+            <span className="mb-1 block font-medium text-slate-700">Tipo de talla</span>
+            <div className="flex flex-wrap gap-2">
+              {OPCIONES_TALLA.map((tipo) => (
+                <button
+                  key={tipo}
+                  type="button"
+                  onClick={() => setSeleccion((s) => ({ ...s, [tipo]: !s[tipo] }))}
+                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                    seleccion[tipo]
+                      ? "border-blue-600 bg-blue-600 text-white"
+                      : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Talla {tipo}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-slate-400">
+              Puedes elegir varias a la vez.
+              {tipoTalla && (
+                <span className="ml-1 font-semibold text-blue-600">
+                  → {TIPO_TALLA_LABEL[tipoTalla] ?? tipoTalla}
+                </span>
+              )}
+            </p>
           </div>
-          <p className="mt-1 text-xs text-slate-400">
-            Puedes elegir varias a la vez.
-            {tipoTalla && (
-              <span className="ml-1 font-semibold text-blue-600">
-                → {TIPO_TALLA_LABEL[tipoTalla] ?? tipoTalla}
-              </span>
-            )}
-          </p>
-        </div>
+        )}
 
         <Input
           label="Precio referencial (S/)"
@@ -428,12 +743,39 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
           onChange={(e) => setPrecio(e.target.value)}
         />
 
-        <Input
-          label="URL de imagen (opcional)"
-          value={fotoUrl}
-          onChange={(e) => setFotoUrl(e.target.value)}
-          placeholder="Pronto se importará desde el Drive"
-        />
+        <FotoUpload valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} />
+
+        {esDropship && (
+          <>
+            <div>
+              <Textarea
+                label="Detalles (colores / tallas disponibles)"
+                value={detalles}
+                onChange={(e) => setDetalles(e.target.value)}
+                rows={3}
+                placeholder="Ej: Color rosa, tallas S/M/L"
+              />
+            </div>
+            <div className="flex items-end gap-2">
+              <Select
+                label="Proveedor (opcional)"
+                value={proveedorId}
+                onChange={(e) => setProveedorId(e.target.value)}
+                className="flex-1"
+              >
+                <option value="">Sin proveedor</option>
+                {proveedores.map((pr) => (
+                  <option key={pr.id} value={pr.id}>
+                    {pr.nombre}
+                  </option>
+                ))}
+              </Select>
+              <Button variant="secondary" size="sm" onClick={() => setModalNuevoProveedor(true)}>
+                + Nuevo
+              </Button>
+            </div>
+          </>
+        )}
 
         <ErrorBanner message={error} />
 
@@ -452,6 +794,504 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
           </Button>
         </div>
       </div>
+
+      <Modal open={modalNuevoProveedor} onClose={() => setModalNuevoProveedor(false)} title="Nuevo proveedor">
+        <FormProveedor
+          onGuardado={(p) => {
+            setModalNuevoProveedor(false);
+            recargar();
+            setProveedorId(p.id);
+          }}
+          onCancel={() => setModalNuevoProveedor(false)}
+        />
+      </Modal>
+    </div>
+  );
+}
+
+// ─── Editar ────────────────────────────────────────────────────
+
+function EditarProductos({ productoSel }: { productoSel: string | null }) {
+  const [productos, setProductos] = useState<Producto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sel, setSel] = useState<string | null>(productoSel);
+  const { proveedores, recargar } = useListaProveedores();
+  const [modalNuevoProveedor, setModalNuevoProveedor] = useState(false);
+
+  const cargar = useCallback(async () => {
+    const res = await api<{ productos: Producto[] }>("/api/productos");
+    if (res.error) setError(res.error);
+    else setProductos(res.data?.productos ?? []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    cargar();
+  }, [cargar]);
+
+  useEffect(() => {
+    if (productoSel) setSel(productoSel);
+  }, [productoSel]);
+
+  const q = search.trim().toLowerCase();
+  const filtrados = useMemo(
+    () =>
+      productos.filter(
+        (p) =>
+          !q ||
+          p.nombre.toLowerCase().includes(q) ||
+          p.imei.toLowerCase().includes(q)
+      ),
+    [productos, q]
+  );
+
+  const actual = productos.find((p) => p.id === sel) ?? null;
+
+  if (loading) return <Spinner />;
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+      {error && (
+        <div className="lg:col-span-2">
+          <ErrorBanner message={error} />
+        </div>
+      )}
+      <div>
+        <Input
+          placeholder="Buscar por nombre o IMEI..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <div className="mt-3 flex max-h-[70vh] flex-col gap-1 overflow-y-auto pr-1">
+          {filtrados.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setSel(p.id)}
+              className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                sel === p.id
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-slate-200 bg-white hover:bg-slate-50"
+              }`}
+            >
+              {p.foto_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.foto_url} alt={p.nombre} className="h-9 w-9 shrink-0 rounded object-cover" />
+              ) : (
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-400">
+                  —
+                </span>
+              )}
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-slate-800">{p.nombre}</span>
+                <span className="block truncate font-mono text-xs text-slate-400">
+                  {p.imei}
+                  {p.es_dropship && <span className="ml-1 text-cyan-600">· dropship</span>}
+                </span>
+              </span>
+            </button>
+          ))}
+          {filtrados.length === 0 && (
+            <p className="py-6 text-center text-sm text-slate-400">Sin resultados.</p>
+          )}
+        </div>
+      </div>
+
+      <div>
+        {actual ? (
+          <FormEditarProducto
+            key={actual.id}
+            producto={actual}
+            proveedores={proveedores}
+            onActualizado={cargar}
+            onNuevoProveedor={() => setModalNuevoProveedor(true)}
+          />
+        ) : (
+          <EmptyState title="Selecciona un producto" subtitle="Usa la lista de la izquierda" />
+        )}
+      </div>
+
+      <Modal open={modalNuevoProveedor} onClose={() => setModalNuevoProveedor(false)} title="Nuevo proveedor">
+        <FormProveedor
+          onGuardado={() => {
+            setModalNuevoProveedor(false);
+            recargar();
+          }}
+          onCancel={() => setModalNuevoProveedor(false)}
+        />
+      </Modal>
+    </div>
+  );
+}
+
+function FormEditarProducto({
+  producto,
+  proveedores,
+  onActualizado,
+  onNuevoProveedor,
+}: {
+  producto: Producto;
+  proveedores: Proveedor[];
+  onActualizado: () => void;
+  onNuevoProveedor: () => void;
+}) {
+  const [nombre, setNombre] = useState(producto.nombre);
+  const [imei, setImei] = useState(producto.imei);
+  const [precio, setPrecio] = useState(String(producto.precio_referencial ?? 0));
+  const [fotoUrl, setFotoUrl] = useState<string | null>(producto.foto_url ?? null);
+  const [detalles, setDetalles] = useState(producto.detalles ?? "");
+  const [proveedorId, setProveedorId] = useState(producto.proveedor_id ?? "");
+  const [seleccion, setSeleccion] = useState<Record<string, boolean>>(() => {
+    const tipos = TIPO_TALLA_TIPOS[producto.tipo_talla] ?? [];
+    return {
+      A: tipos.includes("A"),
+      B: tipos.includes("B"),
+      C: tipos.includes("C"),
+    };
+  });
+  const [dni, setDni] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [ok, setOk] = useState(false);
+  const [modalEliminar, setModalEliminar] = useState(false);
+  const [dniEliminar, setDniEliminar] = useState("");
+  const [eliminando, setEliminando] = useState(false);
+
+  useEffect(() => {
+    setNombre(producto.nombre);
+    setImei(producto.imei);
+    setPrecio(String(producto.precio_referencial ?? 0));
+    setFotoUrl(producto.foto_url ?? null);
+    setDetalles(producto.detalles ?? "");
+    setProveedorId(producto.proveedor_id ?? "");
+    setDni("");
+    setOk(false);
+    setError(null);
+  }, [producto]);
+
+  const tipoTallaNuevo = useMemo(
+    () => OPCIONES_TALLA.filter((t) => seleccion[t]).join(""),
+    [seleccion]
+  );
+
+  const imeiCambio = imei.trim() !== producto.imei;
+
+  async function guardar() {
+    setError(null);
+    setOk(false);
+    if (!nombre.trim()) {
+      setError("El nombre no puede quedar vacío.");
+      return;
+    }
+    if (imeiCambio && !dni.trim()) {
+      setError("Escribe tu DNI para confirmar el cambio de IMEI.");
+      return;
+    }
+    setLoading(true);
+    const { error } = await api(`/api/productos/${producto.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        ...(nombre.trim() !== producto.nombre ? { nombre: nombre.trim() } : {}),
+        ...(imeiCambio ? { imei: imei.trim(), dniConfirmacion: dni.trim() } : {}),
+        ...(Number(precio || 0) !== Number(producto.precio_referencial ?? 0)
+          ? { precio_referencial: Number(precio || 0) }
+          : {}),
+        ...((fotoUrl?.trim() || null) !== (producto.foto_url ?? null) ? { foto_url: fotoUrl?.trim() || null } : {}),
+        ...(producto.es_dropship
+          ? {
+              ...((detalles.trim() || null) !== (producto.detalles ?? null)
+                ? { detalles: detalles.trim() || null }
+                : {}),
+              ...((proveedorId || null) !== producto.proveedor_id ? { proveedor_id: proveedorId || null } : {}),
+            }
+          : {}),
+        ...(!producto.es_dropship && tipoTallaNuevo && tipoTallaNuevo !== producto.tipo_talla
+          ? { tipo_talla: tipoTallaNuevo }
+          : {}),
+      }),
+    });
+    setLoading(false);
+    if (error) {
+      setError(error);
+      return;
+    }
+    setOk(true);
+    setDni("");
+    onActualizado();
+  }
+
+  async function eliminar() {
+    setError(null);
+    if (!dniEliminar.trim()) {
+      setError("Escribe tu DNI para confirmar la eliminación.");
+      return;
+    }
+    setEliminando(true);
+    const res = await api(`/api/productos/${producto.id}`, {
+      method: "DELETE",
+      body: JSON.stringify({ dniConfirmacion: dniEliminar.trim() }),
+    });
+    setEliminando(false);
+    if (res.error) {
+      setModalEliminar(false);
+      setError(res.error);
+      return;
+    }
+    setModalEliminar(false);
+    onActualizado();
+  }
+
+  return (
+    <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-slate-800">{producto.nombre}</h2>
+        {producto.es_dropship ? (
+          <Badge color="cyan">Dropshipping</Badge>
+        ) : (
+          <Badge color="green">Con stock</Badge>
+        )}
+      </div>
+
+      <Input label="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} required />
+      <div className="flex items-end gap-2">
+        <Input
+          label="IMEI"
+          value={imei}
+          onChange={(e) => {
+            setImei(e.target.value);
+            setOk(false);
+          }}
+          required
+          className="flex-1"
+        />
+        {imeiCambio && (
+          <Input
+            label="DNI de confirmación"
+            value={dni}
+            onChange={(e) => setDni(e.target.value)}
+            placeholder="Escribe tu DNI"
+            className="flex-1"
+          />
+        )}
+      </div>
+
+      {!producto.es_dropship && (
+        <div>
+          <span className="mb-1 block font-medium text-slate-700">Tipo de talla (solo agregar)</span>
+          <div className="flex flex-wrap gap-2">
+            {OPCIONES_TALLA.map((tipo) => {
+              const activo = seleccion[tipo];
+              return (
+                <button
+                  key={tipo}
+                  type="button"
+                  onClick={() => {
+                    if (!activo) {
+                      setSeleccion((s) => ({ ...s, [tipo]: true }));
+                      setOk(false);
+                    }
+                  }}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    activo
+                      ? "border-blue-600 bg-blue-600 text-white"
+                      : "border-slate-300 bg-white text-slate-400"
+                  }`}
+                >
+                  Talla {tipo}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <Input
+        label="Precio referencial (S/)"
+        type="number"
+        step="0.01"
+        value={precio}
+        onChange={(e) => setPrecio(e.target.value)}
+      />
+
+      <FotoUpload valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} />
+
+      {producto.es_dropship && (
+        <>
+          <Textarea
+            label="Detalles (colores / tallas disponibles)"
+            value={detalles}
+            onChange={(e) => setDetalles(e.target.value)}
+            rows={3}
+          />
+          <div className="flex items-end gap-2">
+            <Select
+              label="Proveedor"
+              value={proveedorId}
+              onChange={(e) => setProveedorId(e.target.value)}
+              className="flex-1"
+            >
+              <option value="">Sin proveedor</option>
+              {proveedores.map((pr) => (
+                <option key={pr.id} value={pr.id}>
+                  {pr.nombre}
+                </option>
+              ))}
+            </Select>
+            <Button variant="secondary" size="sm" onClick={onNuevoProveedor}>
+              + Nuevo
+            </Button>
+          </div>
+        </>
+      )}
+
+      <ErrorBanner message={error} />
+
+      {ok && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
+          Cambios guardados.
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-4">
+        <Button variant="danger" size="sm" onClick={() => setModalEliminar(true)}>
+          Eliminar producto
+        </Button>
+        <Button onClick={guardar} disabled={loading}>
+          {loading ? "Guardando..." : "Guardar cambios"}
+        </Button>
+      </div>
+
+      <Modal open={modalEliminar} onClose={() => setModalEliminar(false)} title="Eliminar producto">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">
+            Se eliminará <span className="font-semibold">{producto.nombre}</span> ({producto.imei}).
+            Escribe tu DNI para confirmar.
+          </p>
+          <Input label="DNI" value={dniEliminar} onChange={(e) => setDniEliminar(e.target.value)} />
+          <ErrorBanner message={error} />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setModalEliminar(false)}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={eliminar} disabled={eliminando}>
+              {eliminando ? "Eliminando..." : "Eliminar"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// ─── Proveedores ───────────────────────────────────────────────
+
+function ProveedoresTab() {
+  const { proveedores, loading, error, recargar } = useListaProveedores();
+  const [modal, setModal] = useState<{ open: boolean; editar: Proveedor | null }>({ open: false, editar: null });
+  const [confirmarEliminar, setConfirmarEliminar] = useState<Proveedor | null>(null);
+  const [errorEliminar, setErrorEliminar] = useState<string | null>(null);
+  const [borrando, setBorrando] = useState(false);
+
+  if (loading) return <Spinner />;
+
+  async function eliminar() {
+    if (!confirmarEliminar) return;
+    setErrorEliminar(null);
+    setBorrando(true);
+    const res = await api(`/api/proveedores/${confirmarEliminar.id}`, { method: "DELETE" });
+    setBorrando(false);
+    if (res.error) {
+      setErrorEliminar(res.error);
+      return;
+    }
+    setConfirmarEliminar(null);
+    recargar();
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <p className="text-sm text-slate-500">
+          {proveedores.length} proveedor{proveedores.length === 1 ? "" : "es"}
+        </p>
+        <Button onClick={() => setModal({ open: true, editar: null })}>+ Nuevo proveedor</Button>
+      </div>
+      <ErrorBanner message={error} />
+
+      {proveedores.length === 0 ? (
+        <EmptyState title="No hay proveedores" subtitle="Crea el primero para registrar productos dropshipping" />
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2">Nombre</th>
+                <th className="px-4 py-2">Teléfono</th>
+                <th className="px-4 py-2">Comentario</th>
+                <th className="px-4 py-2">Productos</th>
+                <th className="px-4 py-2 text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proveedores.map((p) => (
+                <tr key={p.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-4 py-2 font-medium text-slate-800">{p.nombre}</td>
+                  <td className="px-4 py-2 text-slate-500">{p.telefono ?? "—"}</td>
+                  <td className="max-w-xs truncate px-4 py-2 text-slate-500">{p.comentario ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-500">{p.n_productos ?? 0}</td>
+                  <td className="px-4 py-2 text-right">
+                    <Button variant="ghost" size="sm" onClick={() => setModal({ open: true, editar: p })}>
+                      Editar
+                    </Button>
+                    <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50" onClick={() => { setErrorEliminar(null); setConfirmarEliminar(p); }}>
+                      Eliminar
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Modal
+        open={modal.open}
+        onClose={() => setModal({ open: false, editar: null })}
+        title={modal.editar ? "Editar proveedor" : "Nuevo proveedor"}
+      >
+        <FormProveedor
+          inicial={modal.editar}
+          onGuardado={() => {
+            setModal({ open: false, editar: null });
+            recargar();
+          }}
+          onCancel={() => setModal({ open: false, editar: null })}
+        />
+      </Modal>
+
+      <Modal
+        open={Boolean(confirmarEliminar)}
+        onClose={() => setConfirmarEliminar(null)}
+        title="Eliminar proveedor"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">
+            Se eliminará el proveedor <span className="font-semibold">{confirmarEliminar?.nombre}</span>.
+            No se puede eliminar si tiene productos vinculados.
+          </p>
+          <ErrorBanner message={errorEliminar} />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmarEliminar(null)}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={eliminar} disabled={borrando}>
+              {borrando ? "Eliminando..." : "Eliminar"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

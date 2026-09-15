@@ -24,7 +24,10 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const imei = String(body.imei ?? "").trim();
   const nombre = String(body.nombre ?? "").trim();
-  const tipoTalla = String(body.tipo_talla ?? "").trim();
+  const esDropship = Boolean(body.es_dropship);
+  const tipoTalla = esDropship
+    ? "sin_talla"
+    : String(body.tipo_talla ?? "").trim();
 
   if (!imei || !nombre) {
     return Response.json({ error: "IMEI y nombre son obligatorios" }, { status: 400 });
@@ -43,6 +46,17 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "Ya existe un producto con ese IMEI" }, { status: 409 });
   }
 
+  if (body.proveedor_id !== undefined && body.proveedor_id !== null) {
+    const { data: prov } = await supabase
+      .from("proveedores")
+      .select("id")
+      .eq("id", String(body.proveedor_id))
+      .maybeSingle();
+    if (!prov) {
+      return Response.json({ error: "El proveedor seleccionado no existe" }, { status: 400 });
+    }
+  }
+
   const { data: producto, error: insertError } = await supabase
     .from("productos")
     .insert({
@@ -51,6 +65,9 @@ export async function POST(request: NextRequest) {
       precio_referencial: Number(body.precio_referencial ?? 0),
       tipo_talla: tipoTalla,
       foto_url: body.foto_url || null,
+      es_dropship: esDropship,
+      detalles: body.detalles ? String(body.detalles).trim() : null,
+      proveedor_id: body.proveedor_id || null,
       creado_por: user.id,
     })
     .select()
@@ -60,7 +77,9 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "No se pudo crear el producto" }, { status: 500 });
   }
 
-  await syncProductoTallas(producto.id, tipoTalla);
+  if (!esDropship) {
+    await syncProductoTallas(producto.id, tipoTalla);
+  }
   await registrarHistorialProducto({
     producto_id: producto.id,
     persona_id: user.id,
