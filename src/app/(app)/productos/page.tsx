@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, useImperativeHandle, forwardRef } from "react";
 import { api, useSesion } from "@/lib/api";
 import { Button, Input, Spinner, ErrorBanner, Select, Textarea, Modal, Badge, EmptyState } from "@/components/ui";
 import { TIPO_TALLA_TIPOS, TIPO_TALLA_LABEL } from "@/lib/productos";
+import { driveImageUrl } from "@/lib/utils";
 
 type Producto = {
   id: string;
@@ -164,48 +165,92 @@ function FormProveedor({
 
 // ─── Subida de foto a Drive ────────────────────────────────────
 
-function FotoUpload({
-  valor,
-  onChange,
-  imei,
-  label = "Foto",
-}: {
+type FotoUploadHandle = {
+  // Guarda en Drive el archivo pendiente (si lo hay) y devuelve la URL final.
+  // Sin archivo pendiente devuelve { ok: true, url: valor actual }. Si la subida
+  // falla o falta el IMEI, devuelve { ok: false, url: null } (sin lanzar).
+  subirAhora: () => Promise<{ ok: boolean; url: string | null }>;
+};
+
+const FotoUpload = forwardRef<FotoUploadHandle, {
   valor: string | null;
   onChange: (url: string | null) => void;
   imei: string;
   label?: string;
-}) {
+}>(function FotoUpload({ valor, onChange, imei, label = "Foto" }, ref) {
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const filePendiente = useRef<File | null>(null);
+  const [previewLocal, setPreviewLocal] = useState<string | null>(null);
 
-  async function subir(file: File) {
+  useImperativeHandle(
+    ref,
+    () => ({
+      subirAhora: async () => {
+        const file = filePendiente.current;
+        if (!file) return { ok: true, url: valor };
+        setError(null);
+        if (!imei.trim()) {
+          setError("Escribe primero el IMEI del producto para poder subir la foto.");
+          return { ok: false, url: null };
+        }
+        setSubiendo(true);
+        const form = new FormData();
+        form.append("archivo", file);
+        form.append("imei", imei.trim());
+        const res = await api<{ foto_url: string }>("/api/productos/foto", {
+          method: "POST",
+          body: form,
+        });
+        setSubiendo(false);
+        if (res.error) {
+          setError(res.error);
+          return { ok: false, url: null };
+        }
+        filePendiente.current = null;
+        if (previewLocal) URL.revokeObjectURL(previewLocal);
+        setPreviewLocal(null);
+        if (res.data?.foto_url) {
+          onChange(res.data.foto_url);
+          return { ok: true, url: res.data.foto_url };
+        }
+        return { ok: true, url: valor };
+      },
+    }),
+    [valor, onChange, imei, previewLocal]
+  );
+
+  function elegir(f: File) {
     setError(null);
-    if (!imei.trim()) {
-      setError("Escribe primero el IMEI del producto para poder subir la foto.");
-      return;
-    }
-    setSubiendo(true);
-    const form = new FormData();
-    form.append("archivo", file);
-    form.append("imei", imei.trim());
-    const res = await api<{ foto_url: string; drive_id: string }>("/api/productos/foto", {
-      method: "POST",
-      body: form,
-    });
-    setSubiendo(false);
-    if (res.error) {
-      setError(res.error);
-      return;
-    }
-    if (res.data?.foto_url) onChange(res.data.foto_url);
+    if (previewLocal) URL.revokeObjectURL(previewLocal);
+    filePendiente.current = f;
+    setPreviewLocal(URL.createObjectURL(f));
   }
+
+  function quitar() {
+    if (filePendiente.current) {
+      filePendiente.current = null;
+      if (previewLocal) URL.revokeObjectURL(previewLocal);
+      setPreviewLocal(null);
+      return;
+    }
+    onChange(null);
+  }
+
+  const mostrar = previewLocal ?? (valor ? driveImageUrl(valor) ?? valor : null);
 
   return (
     <div>
       <span className="mb-1 block font-medium text-slate-700">{label}</span>
       <div className="flex items-start gap-3">
         <label className="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
-          {subiendo ? "Subiendo..." : valor ? "Cambiar foto" : "Subir foto"}
+          {subiendo
+            ? "Subiendo..."
+            : previewLocal
+              ? "Foto elegida"
+              : valor
+                ? "Cambiar foto"
+                : "Subir foto"}
           <input
             type="file"
             accept="image/*"
@@ -213,31 +258,36 @@ function FotoUpload({
             disabled={subiendo}
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) subir(f);
+              if (f) elegir(f);
               e.target.value = "";
             }}
           />
         </label>
-        {valor && (
-          <Button variant="ghost" size="sm" onClick={() => onChange(null)}>
+        {mostrar && (
+          <Button variant="ghost" size="sm" onClick={quitar}>
             Quitar foto
           </Button>
         )}
       </div>
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-      {valor && (
+      {mostrar && (
         <div className="mt-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={valor}
+            src={mostrar}
             alt="Foto del producto"
             className="h-40 w-32 rounded-lg border border-slate-200 object-cover"
           />
         </div>
       )}
+      {previewLocal && !subiendo && (
+        <p className="mt-1 text-xs text-slate-500">
+          La foto se subirá a Google Drive al guardar el producto.
+        </p>
+      )}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </div>
   );
-}
+});
 
 // ─── Lista ─────────────────────────────────────────────────────
 
@@ -430,7 +480,7 @@ function VistaDropship({ productos, onEditar }: { productos: Producto[]; onEdita
           <div className="flex h-44 items-center justify-center bg-slate-100">
             {p.foto_url ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={p.foto_url} alt={p.nombre} className="h-full w-full object-cover" />
+              <img src={driveImageUrl(p.foto_url) ?? p.foto_url} alt={p.nombre} className="h-full w-full object-cover" />
             ) : (
               <span className="text-xs text-slate-400">Sin foto</span>
             )}
@@ -619,6 +669,7 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
 
   const { proveedores, recargar } = useListaProveedores();
   const [modalNuevoProveedor, setModalNuevoProveedor] = useState(false);
+  const fotoRef = useRef<FotoUploadHandle>(null);
 
   const tipoTalla = useMemo(
     () => OPCIONES_TALLA.filter((t) => seleccion[t]).join(""),
@@ -633,6 +684,12 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
       return;
     }
     setLoading(true);
+    const resFoto = await fotoRef.current?.subirAhora();
+    if (!resFoto?.ok) {
+      setLoading(false);
+      return;
+    }
+    const urlFoto = resFoto.url;
     const { data, error } = await api<{ producto: Producto }>("/api/productos", {
       method: "POST",
       body: JSON.stringify({
@@ -640,7 +697,7 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
         nombre,
         tipo_talla: esDropship ? "sin_talla" : tipoTalla,
         precio_referencial: Number(precio || 0),
-        foto_url: fotoUrl?.trim() || null,
+        foto_url: urlFoto?.trim() || null,
         es_dropship: esDropship,
         detalles: esDropship ? detalles.trim() || null : null,
         proveedor_id: esDropship && proveedorId ? proveedorId : null,
@@ -743,7 +800,7 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
           onChange={(e) => setPrecio(e.target.value)}
         />
 
-        <FotoUpload valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} />
+<FotoUpload ref={fotoRef} valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} />
 
         {esDropship && (
           <>
@@ -878,7 +935,7 @@ function EditarProductos({ productoSel }: { productoSel: string | null }) {
             >
               {p.foto_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={p.foto_url} alt={p.nombre} className="h-9 w-9 shrink-0 rounded object-cover" />
+                <img src={driveImageUrl(p.foto_url) ?? p.foto_url} alt={p.nombre} className="h-9 w-9 shrink-0 rounded object-cover" />
               ) : (
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-400">
                   —
@@ -958,6 +1015,7 @@ function FormEditarProducto({
   const [modalEliminar, setModalEliminar] = useState(false);
   const [dniEliminar, setDniEliminar] = useState("");
   const [eliminando, setEliminando] = useState(false);
+  const fotoRef = useRef<FotoUploadHandle>(null);
 
   useEffect(() => {
     setNombre(producto.nombre);
@@ -990,6 +1048,12 @@ function FormEditarProducto({
       return;
     }
     setLoading(true);
+    const resFoto = await fotoRef.current?.subirAhora();
+    if (!resFoto?.ok) {
+      setLoading(false);
+      return;
+    }
+    const fotoFinal = resFoto?.url ?? fotoUrl;
     const { error } = await api(`/api/productos/${producto.id}`, {
       method: "PATCH",
       body: JSON.stringify({
@@ -998,7 +1062,7 @@ function FormEditarProducto({
         ...(Number(precio || 0) !== Number(producto.precio_referencial ?? 0)
           ? { precio_referencial: Number(precio || 0) }
           : {}),
-        ...((fotoUrl?.trim() || null) !== (producto.foto_url ?? null) ? { foto_url: fotoUrl?.trim() || null } : {}),
+        ...((fotoFinal?.trim() || null) !== (producto.foto_url ?? null) ? { foto_url: fotoFinal?.trim() || null } : {}),
         ...(producto.es_dropship
           ? {
               ...((detalles.trim() || null) !== (producto.detalles ?? null)
@@ -1115,7 +1179,7 @@ function FormEditarProducto({
         onChange={(e) => setPrecio(e.target.value)}
       />
 
-      <FotoUpload valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} />
+      <FotoUpload ref={fotoRef} valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} />
 
       {producto.es_dropship && (
         <>
