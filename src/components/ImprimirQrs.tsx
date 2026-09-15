@@ -195,7 +195,7 @@ export default function ImprimirQrs() {
                 <p className="text-center text-xs font-bold text-slate-800">
                   {f.imei ?? "—"}-{f.talla ?? "—"}
                 </p>
-                <QRCodeSVG value={f.codigo_qr} size={120} />
+                <QRCodeSVG value={f.codigo_qr} size={120} level="H" marginSize={4} />
                 <p className="font-mono text-xs text-slate-700">{f.codigo_qr}</p>
               </div>
             ))}

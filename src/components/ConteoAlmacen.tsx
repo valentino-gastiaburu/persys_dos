@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { api } from "@/lib/api";
 import { Button, Input, Spinner, ErrorBanner } from "@/components/ui";
-import { Html5Qrcode } from "html5-qrcode";
+import QrScanner from "qr-scanner";
 
 const STORAGE_KEY = "persys:conteo";
 const HEX8 = /^[0-9a-f]{8}$/;
@@ -96,7 +96,8 @@ export default function ConteoAlmacen() {
   const [pendiente, setPendiente] = useState(false);
   const [flash, setFlash] = useState<{ tipo: "ok" | "err" | "warn"; texto: string } | null>(null);
   const [ultimo, setUltimo] = useState<{ tipo: "ok" | "err" | "warn"; texto: string } | null>(null);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerRef = useRef<QrScanner | null>(null);
+  const scannerVideoRef = useRef<HTMLVideoElement | null>(null);
   const escaneadosRef = useRef<Escaneo[]>([]);
   const lastScanRef = useRef<{ codigo: string; ts: number }>({ codigo: "", ts: 0 });
   const frameErrRef = useRef(0);
@@ -104,7 +105,6 @@ export default function ConteoAlmacen() {
   const pendingScanRef = useRef<{ codigo: string; timeout: number } | null>(null);
   const solvedScanRef = useRef<{ codigo: string; ts: number }>({ codigo: "", ts: 0 });
   const lastDecodeRef = useRef<{ codigo: string; ts: number }>({ codigo: "", ts: 0 });
-  const scannerDivId = "inventario-scanner";
 
   useEffect(() => {
     escaneadosRef.current = escaneados;
@@ -216,7 +216,7 @@ export default function ConteoAlmacen() {
     return () => {
       if (scannerRef.current) {
         try {
-          scannerRef.current.stop().catch(() => {});
+          scannerRef.current.destroy();
         } catch {
           // ignore
         }
@@ -227,8 +227,8 @@ export default function ConteoAlmacen() {
   async function detenerScanner() {
     if (scannerRef.current) {
       try {
-        await scannerRef.current.stop();
-        scannerRef.current.clear();
+        scannerRef.current.stop();
+        scannerRef.current.destroy();
       } catch {
         // ignore
       }
@@ -253,45 +253,50 @@ export default function ConteoAlmacen() {
     pendingScanRef.current = null;
     setScannerActivo(true);
     setTimeout(() => {
+      const video = scannerVideoRef.current;
+      if (!video) {
+        setScannerActivo(false);
+        setCamMsg("No se pudo iniciar la cámara. Reintentá.");
+        return;
+      }
       try {
-        const scanner = new Html5Qrcode(scannerDivId, { verbose: false });
-        scannerRef.current = scanner;
-        scanner
-          .start(
-            { facingMode: "environment" },
-            { fps: 12, qrbox: { width: 250, height: 250 }, disableFlip: false, aspectRatio: 1.0 },
-            (decodedText) => {
-              const codigo = decodedText.trim().toLowerCase();
-              lastDecodeRef.current = { codigo, ts: Date.now() };
-              if (
-                !pendingScanRef.current &&
-                solvedScanRef.current.codigo === codigo &&
-                Date.now() - solvedScanRef.current.ts < 2500
-              ) {
-                setDetectado(true);
-                return;
-              }
-              if (!pendingScanRef.current || pendingScanRef.current.codigo !== codigo) {
-                if (pendingScanRef.current?.timeout) {
-                  clearTimeout(pendingScanRef.current.timeout);
-                }
-                pendingScanRef.current = {
-                  codigo,
-                  timeout: window.setTimeout(() => {
-                    if (pendingScanRef.current?.codigo === codigo) {
-                      pendingScanRef.current = null;
-                    }
-                    solvedScanRef.current = { codigo, ts: Date.now() };
-                    setPendiente(false);
-                    procesar(codigo);
-                  }, 900),
-                };
-                setPendiente(true);
-                setScanStatus("Sostén el QR y confirmo...");
-              }
+        const scanner = new QrScanner(
+          video,
+          (result) => {
+            const codigo = result.data.trim().toLowerCase();
+            lastDecodeRef.current = { codigo, ts: Date.now() };
+            if (
+              !pendingScanRef.current &&
+              solvedScanRef.current.codigo === codigo &&
+              Date.now() - solvedScanRef.current.ts < 2500
+            ) {
               setDetectado(true);
-            },
-            () => {
+              return;
+            }
+            if (!pendingScanRef.current || pendingScanRef.current.codigo !== codigo) {
+              if (pendingScanRef.current?.timeout) {
+                clearTimeout(pendingScanRef.current.timeout);
+              }
+              pendingScanRef.current = {
+                codigo,
+                timeout: window.setTimeout(() => {
+                  if (pendingScanRef.current?.codigo === codigo) {
+                    pendingScanRef.current = null;
+                  }
+                  solvedScanRef.current = { codigo, ts: Date.now() };
+                  setPendiente(false);
+                  procesar(codigo);
+                }, 900),
+              };
+              setPendiente(true);
+              setScanStatus("Sostén el QR y confirmo...");
+            }
+            setDetectado(true);
+          },
+          {
+            preferredCamera: "environment",
+            maxScansPerSecond: 12,
+            onDecodeError: () => {
               const now = Date.now();
               const gapOk =
                 lastDecodeRef.current.codigo === pendingScanRef.current?.codigo &&
@@ -319,8 +324,12 @@ export default function ConteoAlmacen() {
                     : `Escaneando... (intento ${frameErrRef.current}). Acercá el código, centrado y quieto.`
                 );
               }
-            }
-          )
+            },
+          }
+        );
+        scannerRef.current = scanner;
+        scanner
+          .start()
           .then(() => setScanStatus("Cámara activa. Apunta un QR y mantenelo fijo."))
           .catch((err: unknown) => {
             setScannerActivo(false);
@@ -532,11 +541,16 @@ export default function ConteoAlmacen() {
                 aria-modal="true"
               >
                 <div
-                  className={`relative max-w-md overflow-hidden rounded-lg border-2 bg-slate-900 ${
+                  className={`relative aspect-square max-w-md overflow-hidden rounded-lg border-2 bg-slate-900 ${
                     detectado ? "border-emerald-500" : "border-slate-600"
                   }`}
                 >
-                  <div id={scannerDivId} />
+                  <video
+                    ref={scannerVideoRef}
+                    muted
+                    playsInline
+                    className="block h-full w-full object-cover"
+                  />
                   <div className="pointer-events-none absolute inset-0" aria-hidden="true">
                     <div className="absolute left-1/2 top-1/2 aspect-square w-[54%] -translate-x-1/2 -translate-y-1/2">
                       <span

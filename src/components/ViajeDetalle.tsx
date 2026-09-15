@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { Button, Badge, Spinner, ErrorBanner } from "@/components/ui";
-import { Html5Qrcode } from "html5-qrcode";
+import QrScanner from "qr-scanner";
 
 const ESTADO_BADGE: Record<string, string> = {
   programado: "slate",
@@ -100,9 +100,9 @@ export default function ViajeDetalle() {
   const [guardando, setGuardando] = useState(false);
   // Scanner de cámara
   const [scannerActivo, setScannerActivo] = useState(false);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerRef = useRef<QrScanner | null>(null);
+  const scannerVideoRef = useRef<HTMLVideoElement | null>(null);
   const procesandoRetornoRef = useRef(false);
-  const scannerDivId = "qr-scanner";
 
   // Búsqueda manual por texto
   const [busquedaActiva, setBusquedaActiva] = useState(false);
@@ -140,7 +140,7 @@ export default function ViajeDetalle() {
     return () => {
       if (scannerRef.current) {
         try {
-          scannerRef.current.stop().catch(() => {});
+          scannerRef.current.destroy();
         } catch {
           // ignore
         }
@@ -149,11 +149,11 @@ export default function ViajeDetalle() {
   }, []);
 
   // Detener scanner helper
-  async function detenerScanner() {
+  function detenerScanner() {
     if (scannerRef.current) {
       try {
-        await scannerRef.current.stop();
-        scannerRef.current.clear();
+        scannerRef.current.stop();
+        scannerRef.current.destroy();
       } catch {
         // ignore
       }
@@ -220,19 +220,29 @@ export default function ViajeDetalle() {
     setMsg(null);
     setScannerActivo(true);
 
-    // Esperar al siguiente render para que el div exista
+    // Esperar al siguiente render para que el video exista
     setTimeout(() => {
+      const video = scannerVideoRef.current;
+      if (!video) {
+        setScannerActivo(false);
+        setSlotScanning(null);
+        setMsg({ tipo: "err", texto: "No se pudo iniciar la cámara." });
+        return;
+      }
       try {
-        const scanner = new Html5Qrcode(scannerDivId);
-        scannerRef.current = scanner;
-        scanner.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          (decodedText) => {
-            procesarEscaneo(decodedText);
+        const scanner = new QrScanner(
+          video,
+          (result) => {
+            procesarEscaneo(result.data);
           },
-          () => {}
-        ).catch(() => {
+          {
+            preferredCamera: "environment",
+            maxScansPerSecond: 10,
+            onDecodeError: () => {},
+          }
+        );
+        scannerRef.current = scanner;
+        scanner.start().catch(() => {
           setScannerActivo(false);
           setSlotScanning(null);
           setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos." });
@@ -429,30 +439,37 @@ export default function ViajeDetalle() {
       setScannerActivo(true);
       setMsg(null);
 
-      // Esperar al siguiente render para que el div exista en el DOM
+      // Esperar al siguiente render para que el video exista en el DOM
       setTimeout(() => {
+        const video = scannerVideoRef.current;
+        if (!video) {
+          setScannerActivo(false);
+          setMsg({ tipo: "err", texto: "No se pudo iniciar la cámara. Reintentá." });
+          return;
+        }
         try {
-          const scanner = new Html5Qrcode(scannerDivId);
+          const scanner = new QrScanner(
+            video,
+            (result) => {
+              if (!procesandoRetornoRef.current) {
+                procesandoRetornoRef.current = true;
+                escanearRetorno(result.data).finally(() => {
+                  procesandoRetornoRef.current = false;
+                });
+              }
+              detenerScanner();
+            },
+            {
+              preferredCamera: "environment",
+              maxScansPerSecond: 10,
+              onDecodeError: () => {},
+            }
+          );
           scannerRef.current = scanner;
-          scanner
-            .start(
-              { facingMode: "environment" },
-              { fps: 10, qrbox: { width: 250, height: 250 } },
-              (decodedText) => {
-                if (!procesandoRetornoRef.current) {
-                  procesandoRetornoRef.current = true;
-                  escanearRetorno(decodedText).finally(() => {
-                    procesandoRetornoRef.current = false;
-                  });
-                }
-                detenerScanner();
-              },
-              () => {}
-            )
-            .catch(() => {
-              setScannerActivo(false);
-              setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos del navegador o usa el botón 'Recoger' de cada producto para registrarlo manualmente." });
-            });
+          scanner.start().catch(() => {
+            setScannerActivo(false);
+            setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos del navegador o usa el botón 'Recoger' de cada producto para registrarlo manualmente." });
+          });
         } catch {
           setScannerActivo(false);
           setMsg({ tipo: "err", texto: "No se pudo abrir la cámara. Verifica los permisos del navegador o usa el botón 'Recoger' de cada producto para registrarlo manualmente." });
@@ -524,7 +541,14 @@ export default function ViajeDetalle() {
 
         {scannerActivo && (
           <div className="mb-4">
-            <div id={scannerDivId} className="overflow-hidden rounded-lg bg-black" />
+            <div className="overflow-hidden rounded-lg bg-black">
+              <video
+                ref={scannerVideoRef}
+                muted
+                playsInline
+                className="block aspect-video w-full object-cover"
+              />
+            </div>
           </div>
         )}
 
@@ -744,7 +768,14 @@ export default function ViajeDetalle() {
                 ✕
               </button>
             </div>
-            <div id={scannerDivId} className="overflow-hidden rounded-lg bg-black" />
+            <div className="overflow-hidden rounded-lg bg-black">
+              <video
+                ref={scannerVideoRef}
+                muted
+                playsInline
+                className="block aspect-video w-full object-cover"
+              />
+            </div>
           </div>
         </div>
       )}
