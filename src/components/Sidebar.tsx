@@ -79,14 +79,15 @@ export default function Sidebar({ user }: { user: SessionUser }) {
   const logout = useLogout();
   const esAlmacen = user.rol === "almacen" || user.rol === "controller" || user.rol === "admin";
   const esVendedora = user.rol === "vendedora";
+  const esSoloAlmacen = user.rol === "almacen";
 
   const links: LinkItem[] = [
-    { href: "/", label: "Inicio", icon: "inicio", show: !esVendedora },
-    { href: "/pedidos", label: "Pedidos", icon: "pedidos" },
+    { href: "/", label: "Inicio", icon: "inicio", show: !esVendedora && !esSoloAlmacen },
+    { href: "/pedidos", label: "Pedidos", icon: "pedidos", show: !esSoloAlmacen },
     { href: "/productos", label: "Productos", icon: "productos" },
     { href: "/productos-unicos", label: "Productos Únicos", icon: "unicos", show: !esVendedora },
-    { href: "/clientes", label: "Clientes", icon: "clientes" },
-    { href: "/pagos", label: "Pagos", icon: "pagos" },
+    { href: "/clientes", label: "Clientes", icon: "clientes", show: !esSoloAlmacen },
+    { href: "/pagos", label: "Pagos", icon: "pagos", show: !esSoloAlmacen },
     { href: "/cargos", label: "Cargos", icon: "cargos" },
     { href: "/almacen", label: "Almacén / Viajes", icon: "almacen", show: esAlmacen },
     { href: "/bitacora", label: "Bitácora", icon: "bitacora", show: user.rol === "controller" || user.rol === "admin" },
