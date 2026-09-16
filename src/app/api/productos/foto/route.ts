@@ -3,9 +3,11 @@ import { requireRoles } from "@/lib/auth";
 import { subirComprobante } from "@/lib/drive";
 
 // POST /api/productos/foto
-//   body: multipart/form-data con "archivo" (imagen, máx 5 MB) y "imei" (texto).
+//   body: multipart/form-data con "archivo" (imagen, máx 5 MB), "imei" (texto)
+//   y "codigo" (id corto del producto, opcional).
 // Sube la foto a la MISMA carpeta de Drive que los comprobantes (la función
-// subirComprobante usa DRIVE_COMPROBANTES_FOLDER_ID) con nombre "producto-{IMEI}".
+// subirComprobante usa DRIVE_COMPROBANTES_FOLDER_ID) con nombre
+// "prod-{codigo}-{imei}" (o "producto-{IMEI}" si no viene codigo).
 // Devuelve el link visible para cualquiera, listo para guardar en productos.foto_url.
 export async function POST(request: NextRequest) {
   const { user, error } = await requireRoles(["vendedora", "agendadora", "almacen", "controller", "admin"]);
@@ -23,6 +25,7 @@ export async function POST(request: NextRequest) {
 
   const archivo = form.get("archivo");
   const imei = String(form.get("imei") ?? "").trim();
+  const codigo = String(form.get("codigo") ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
   if (!(archivo instanceof File)) {
     return Response.json({ error: "Falta el archivo (campo 'archivo')" }, { status: 400 });
@@ -44,7 +47,9 @@ export async function POST(request: NextRequest) {
 
   const buffer = Buffer.from(await archivo.arrayBuffer());
   const ext = extDeImagen(mime);
-  const nombre = `producto-${sanitizarNombre(imei)}${ext}`;
+  const nombre = codigo
+    ? `prod-${codigo}-${sanitizarNombre(imei)}${ext}`
+    : `producto-${sanitizarNombre(imei)}${ext}`;
 
   try {
     const resultado = await subirComprobante(buffer, nombre, mime);

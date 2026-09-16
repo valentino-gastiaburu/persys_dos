@@ -23,6 +23,16 @@ export const TIPO_TALLA_LABEL: Record<string, string> = {
   sin_talla: "Sin talla",
 };
 
+// Código corto (5 chars, solo minúsculas + dígitos) derivado del id uuid del
+// producto. Es determinístico: el mismo id siempre da el mismo código. Se usa
+// para nombrar la foto en Drive ("prod-{codigo}-{imei}") sin depender del IMEI.
+export function codigoProducto(id: string): string {
+  const hex = id.replace(/-/g, "").substring(0, 12);
+  const n = parseInt(hex, 16);
+  const base36 = n.toString(36); // 0-9a-z, sin caracteres especiales
+  return base36.slice(-5).padStart(5, "0");
+}
+
 export async function getTallasPorTipo(): Promise<Record<string, any[]>> {
   const supabase = getSupabase();
   const { data } = await supabase

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef, useImperativeHandle, forwardRef } from "react";
 import { api, useSesion } from "@/lib/api";
 import { Button, Input, Spinner, ErrorBanner, Select, Textarea, Modal, Badge, EmptyState } from "@/components/ui";
-import { TIPO_TALLA_TIPOS, TIPO_TALLA_LABEL } from "@/lib/productos";
+import { TIPO_TALLA_TIPOS, TIPO_TALLA_LABEL, codigoProducto } from "@/lib/productos";
 import { driveImageUrl } from "@/lib/utils";
 
 type Producto = {
@@ -165,6 +165,15 @@ function FormProveedor({
 
 // ─── Subida de foto a Drive ────────────────────────────────────
 
+// Genera un uuid v4 en el cliente para el producto nuevo (oculto, inmutable).
+function crearUuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const h = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0");
+  return `${h()}${h()}-${h()}-4${h().slice(1)}-${"89ab".charAt(Math.floor(Math.random() * 4))}${h().slice(1)}-${h()}${h()}${h()}`;
+}
+
 type FotoUploadHandle = {
   // Guarda en Drive el archivo pendiente (si lo hay) y devuelve la URL final.
   // Sin archivo pendiente devuelve { ok: true, url: valor actual }. Si la subida
@@ -176,8 +185,9 @@ const FotoUpload = forwardRef<FotoUploadHandle, {
   valor: string | null;
   onChange: (url: string | null) => void;
   imei: string;
+  codigo?: string;
   label?: string;
-}>(function FotoUpload({ valor, onChange, imei, label = "Foto" }, ref) {
+}>(function FotoUpload({ valor, onChange, imei, codigo, label = "Foto" }, ref) {
   const [subiendo, setSubiendo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const filePendiente = useRef<File | null>(null);
@@ -198,6 +208,7 @@ const FotoUpload = forwardRef<FotoUploadHandle, {
         const form = new FormData();
         form.append("archivo", file);
         form.append("imei", imei.trim());
+        if (codigo) form.append("codigo", codigo);
         const res = await api<{ foto_url: string }>("/api/productos/foto", {
           method: "POST",
           body: form,
@@ -217,7 +228,7 @@ const FotoUpload = forwardRef<FotoUploadHandle, {
         return { ok: true, url: valor };
       },
     }),
-    [valor, onChange, imei, previewLocal]
+    [valor, onChange, imei, codigo, previewLocal]
   );
 
   function elegir(f: File) {
@@ -667,6 +678,12 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
   const [loading, setLoading] = useState(false);
   const [creado, setCreado] = useState<string | null>(null);
 
+  // id oculto generado al abrir el form: define el código de la foto y el id
+  // final del producto creado (no cambia jamás; el IMEI sí es editable). Se
+  // regenera tras cada creación para permitir crear varios seguidos.
+  const [idNuevo, setIdNuevo] = useState(() => crearUuid());
+  const codigo = useMemo(() => codigoProducto(idNuevo), [idNuevo]);
+
   const { proveedores, recargar } = useListaProveedores();
   const [modalNuevoProveedor, setModalNuevoProveedor] = useState(false);
   const fotoRef = useRef<FotoUploadHandle>(null);
@@ -693,6 +710,7 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
     const { data, error } = await api<{ producto: Producto }>("/api/productos", {
       method: "POST",
       body: JSON.stringify({
+        id: idNuevo,
         imei,
         nombre,
         tipo_talla: esDropship ? "sin_talla" : tipoTalla,
@@ -721,6 +739,7 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
     setFotoUrl("");
     setDetalles("");
     setProveedorId("");
+    setIdNuevo(crearUuid());
   }
 
   return (
@@ -800,7 +819,7 @@ function CrearProducto({ onCreado }: { onCreado: () => void }) {
           onChange={(e) => setPrecio(e.target.value)}
         />
 
-<FotoUpload ref={fotoRef} valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} />
+<FotoUpload ref={fotoRef} valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} codigo={codigo} />
 
         {esDropship && (
           <>
@@ -1179,7 +1198,7 @@ function FormEditarProducto({
         onChange={(e) => setPrecio(e.target.value)}
       />
 
-      <FotoUpload ref={fotoRef} valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} />
+      <FotoUpload ref={fotoRef} valor={fotoUrl || null} onChange={setFotoUrl} imei={imei} codigo={codigoProducto(producto.id)} />
 
       {producto.es_dropship && (
         <>

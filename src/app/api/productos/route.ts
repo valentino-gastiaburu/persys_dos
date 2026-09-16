@@ -46,6 +46,16 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "Ya existe un producto con ese IMEI" }, { status: 409 });
   }
 
+  // El id se genera en el cliente al abrir el form (oculto e inmutable): así la
+  // foto de Drive se nombra "prod-{codigo}-{imei}" con el MISMO id del producto.
+  // Solo se acepta en creación (aún no hay referencias que romper); de no venir,
+  // genera uno la BD.
+  const idExplicito = String(body.id ?? "").trim();
+  const uuidValido = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idExplicito);
+  if (idExplicito && !uuidValido) {
+    return Response.json({ error: "El id del producto es inválido" }, { status: 400 });
+  }
+
   if (body.proveedor_id !== undefined && body.proveedor_id !== null) {
     const { data: prov } = await supabase
       .from("proveedores")
@@ -60,6 +70,7 @@ export async function POST(request: NextRequest) {
   const { data: producto, error: insertError } = await supabase
     .from("productos")
     .insert({
+      ...(idExplicito && uuidValido ? { id: idExplicito } : {}),
       imei,
       nombre,
       precio_referencial: Number(body.precio_referencial ?? 0),
