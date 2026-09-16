@@ -19,7 +19,7 @@ export async function GET() {
       telefono,
       comentario,
       creado_el,
-      productos:productos(id)
+      productos:productos(id, proveedor_id, estado)
     `)
     .order("nombre", { ascending: true });
 
@@ -29,7 +29,9 @@ export async function GET() {
 
   const proveedores = (data ?? []).map((p: any) => ({
     ...p,
-    n_productos: Array.isArray(p.productos) ? p.productos.length : 0,
+    n_productos: Array.isArray(p.productos)
+      ? p.productos.filter((x: any) => x.estado !== "eliminado").length
+      : 0,
     productos: undefined,
   }));
 

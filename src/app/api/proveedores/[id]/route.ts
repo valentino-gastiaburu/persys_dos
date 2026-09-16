@@ -115,6 +115,7 @@ export async function DELETE(
     .from("productos")
     .select("id")
     .eq("proveedor_id", id)
+    .neq("estado", "eliminado")
     .limit(1);
   if (vinculados && vinculados.length > 0) {
     return Response.json(
